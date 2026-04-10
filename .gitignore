@@ -1,0 +1,9 @@
+target/
+src-tauri/target/
+src-tauri/gen/
+*.db
+*.db-shm
+*.db-wal
+*.exe
+settings.json
+qa_records.db
