@@ -102,6 +102,7 @@ pub fn run() {
             load_settings,
             save_settings,
             list_history,
+            list_history_records,
             get_history_item,
             ask
         ])
@@ -189,6 +190,37 @@ fn get_history_item(app: AppHandle, id: i64) -> Result<HistoryRecord, String> {
             },
         )
         .map_err(|error| format!("Failed to read history details: {error}"))
+}
+
+#[tauri::command]
+fn list_history_records(app: AppHandle) -> Result<Vec<HistoryRecord>, String> {
+    let connection = open_database(&app)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT id, question, answer, created_at, model, api_url, latency_ms, status, error_message
+             FROM qa_records
+             ORDER BY created_at ASC, id ASC",
+        )
+        .map_err(|error| format!("Failed to read history records: {error}"))?;
+
+    let rows = statement
+        .query_map([], |row| {
+            Ok(HistoryRecord {
+                id: row.get(0)?,
+                question: row.get(1)?,
+                answer: row.get(2)?,
+                created_at: row.get(3)?,
+                model: row.get(4)?,
+                api_url: row.get(5)?,
+                latency_ms: row.get(6)?,
+                status: row.get(7)?,
+                error_message: row.get(8)?,
+            })
+        })
+        .map_err(|error| format!("Failed to read history records: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Failed to read history records: {error}"))
 }
 
 #[tauri::command]
@@ -321,14 +353,26 @@ async fn ask(app: AppHandle, question: String) -> Result<HistoryRecord, String> 
 
 fn normalize_api_url(input: &str) -> (String, ApiKind) {
     let trimmed = input.trim().trim_end_matches('/').to_string();
+    if trimmed.ends_with("/v1") {
+        return (format!("{trimmed}/chat/completions"), ApiKind::ChatCompletions);
+    }
     if trimmed.ends_with("/responses") {
         return (trimmed, ApiKind::Responses);
     }
     if trimmed.ends_with("/chat/completions") {
         return (trimmed, ApiKind::ChatCompletions);
     }
+    if trimmed.ends_with("/v1/responses") {
+        return (trimmed, ApiKind::Responses);
+    }
+    if trimmed.ends_with("/v1/chat/completions") {
+        return (trimmed, ApiKind::ChatCompletions);
+    }
+    if trimmed.contains("/v1/") {
+        return (trimmed, ApiKind::ChatCompletions);
+    }
 
-    (format!("{trimmed}/chat/completions"), ApiKind::ChatCompletions)
+    (format!("{trimmed}/v1/chat/completions"), ApiKind::ChatCompletions)
 }
 
 fn parse_chat_completion_text(raw_body: &str) -> Result<String, String> {

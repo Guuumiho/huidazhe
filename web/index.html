@@ -3,90 +3,80 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Local QA Window</title>
+    <title>回答者</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="app-shell">
-      <aside class="sidebar">
-        <div class="sidebar-header">
-          <div>
-            <p class="eyebrow">History</p>
-            <h1>提问存档</h1>
-          </div>
-          <button id="refresh-history" class="ghost-button" type="button">刷新</button>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Local Answerer</p>
+          <h1>回答者</h1>
         </div>
-        <div id="history-empty" class="empty-state">还没有历史记录</div>
-        <div id="history-list" class="history-list"></div>
-      </aside>
-
-      <main class="main-panel">
-        <header class="topbar">
-          <div>
-            <p class="eyebrow">Local QA Window</p>
-            <h2>极简问答台</h2>
-          </div>
+        <div class="topbar-actions">
           <div id="config-status" class="status-pill">未配置 API</div>
-        </header>
+          <button id="toggle-settings" class="ghost-button" type="button">设置</button>
+        </div>
+      </header>
 
-        <section class="settings-card">
-          <div class="card-header">
-            <div>
-              <p class="eyebrow">Settings</p>
-              <h3>接口配置</h3>
-            </div>
-            <button id="save-settings" class="ghost-button" type="button">保存配置</button>
+      <section id="settings-panel" class="settings-panel hidden">
+        <div class="settings-header">
+          <div>
+            <p class="eyebrow">Settings</p>
+            <h2>接口配置</h2>
           </div>
+          <button id="save-settings" class="ghost-button" type="button">保存配置</button>
+        </div>
 
-          <div class="settings-grid">
-            <label class="field">
-              <span>API URL</span>
-              <input id="api-url" type="text" placeholder="https://api.openai.com/v1/chat/completions" />
-            </label>
-            <label class="field">
-              <span>API Key</span>
-              <input id="api-key" type="password" placeholder="sk-..." />
-            </label>
-            <label class="field">
-              <span>Model</span>
-              <input id="model" type="text" placeholder="gpt-4.1-mini" />
-            </label>
-          </div>
-        </section>
-
-        <section class="answer-card">
-          <div class="card-header">
-            <div>
-              <p class="eyebrow">Answer</p>
-              <h3 id="answer-title">当前回答</h3>
-            </div>
-            <div id="answer-meta" class="answer-meta">准备就绪</div>
-          </div>
-          <div class="qa-block">
-            <div class="qa-label">问题</div>
-            <div id="current-question" class="question-text">在下方输入你的问题。</div>
-          </div>
-          <div class="qa-block answer-block">
-            <div class="qa-label">回答</div>
-            <pre id="current-answer" class="answer-text">回答会显示在这里。</pre>
-          </div>
-        </section>
-
-        <form id="ask-form" class="composer">
-          <label class="field composer-field">
-            <span>当前提问</span>
-            <textarea
-              id="question-input"
-              rows="4"
-              placeholder="输入一个不会污染主工作流上下文的小问题..."
-            ></textarea>
+        <div class="settings-grid">
+          <label class="field settings-span-2">
+            <span>API URL</span>
+            <input id="api-url" type="text" placeholder="https://api.openai.com/v1" />
+            <small class="field-hint">
+              可填写 `https://api.openai.com/v1`、`.../chat/completions` 或 `.../responses`
+            </small>
           </label>
-          <div class="composer-actions">
-            <div id="form-message" class="form-message"></div>
-            <button id="ask-button" class="primary-button" type="submit">发送提问</button>
+          <label class="field">
+            <span>Model</span>
+            <input id="model" type="text" placeholder="gpt-4.1-mini" />
+          </label>
+          <label class="field settings-span-3">
+            <span>API Key</span>
+            <input id="api-key" type="password" placeholder="sk-..." />
+          </label>
+        </div>
+      </section>
+
+      <main class="chat-card">
+        <div class="chat-header">
+          <div>
+            <p class="eyebrow">Chat</p>
+            <h2>当前问答</h2>
           </div>
-        </form>
+          <div id="chat-meta" class="chat-meta">历史消息会在这里连续显示</div>
+        </div>
+
+        <div id="empty-state" class="empty-state">
+          先在设置里填好 `API URL` 和 `API Key`，然后就可以开始提问。
+        </div>
+
+        <div id="chat-list" class="chat-list"></div>
       </main>
+
+      <form id="ask-form" class="composer">
+        <label class="field composer-field">
+          <span>输入问题</span>
+          <textarea
+            id="question-input"
+            rows="4"
+            placeholder="输入一个不会污染主工作流上下文的小问题..."
+          ></textarea>
+        </label>
+        <div class="composer-actions">
+          <div id="form-message" class="form-message"></div>
+          <button id="ask-button" class="primary-button" type="submit">发送</button>
+        </div>
+      </form>
     </div>
 
     <script src="./app.js"></script>
