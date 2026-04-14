@@ -38,6 +38,14 @@
             <span>API Key</span>
             <input id="api-key" type="password" placeholder="sk-..." />
           </label>
+          <label class="field settings-span-3">
+            <span>主题配色</span>
+            <select id="theme-select">
+              <option value="default-theme">默认配色</option>
+              <option value="quiet-blue-purple-gray">静谧蓝紫灰</option>
+              <option value="cream-macaron">奶油马卡龙</option>
+            </select>
+          </label>
         </div>
       </section>
 
@@ -59,7 +67,10 @@
         </label>
         <div class="composer-actions">
           <div id="form-message" class="form-message"></div>
-          <button id="ask-button" class="primary-button" type="submit">发送</button>
+          <div class="composer-buttons">
+            <button id="concise-toggle" class="ghost-button" type="button">简洁回复</button>
+            <button id="ask-button" class="primary-button" type="submit">发送</button>
+          </div>
         </div>
       </form>
     </div>

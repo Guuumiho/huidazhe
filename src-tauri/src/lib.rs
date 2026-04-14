@@ -12,10 +12,12 @@ const DB_FILE_NAME: &str = "qa_records.db";
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 struct Settings {
     api_url: String,
     api_key: String,
     model: String,
+    theme: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -131,6 +133,11 @@ fn save_settings(app: AppHandle, settings: Settings) -> Result<Settings, String>
         api_url: settings.api_url.trim().to_string(),
         api_key: settings.api_key.trim().to_string(),
         model: settings.model.trim().to_string(),
+        theme: if settings.theme.trim().is_empty() {
+            "default-theme".to_string()
+        } else {
+            settings.theme.trim().to_string()
+        },
     };
 
     let contents = serde_json::to_string_pretty(&sanitized)
@@ -227,7 +234,11 @@ fn list_history_records(app: AppHandle) -> Result<Vec<HistoryRecord>, String> {
 }
 
 #[tauri::command]
-async fn ask(app: AppHandle, question: String) -> Result<HistoryRecord, String> {
+async fn ask(
+    app: AppHandle,
+    question: String,
+    question_prefix: Option<String>,
+) -> Result<HistoryRecord, String> {
     let trimmed_question = question.trim().to_string();
     if trimmed_question.is_empty() {
         return Err("Question cannot be empty.".to_string());
@@ -245,6 +256,10 @@ async fn ask(app: AppHandle, question: String) -> Result<HistoryRecord, String> 
     };
 
     let created_at = Utc::now().timestamp_millis();
+    let api_question = match question_prefix {
+        Some(prefix) if !prefix.trim().is_empty() => format!("{prefix}{trimmed_question}"),
+        _ => trimmed_question.clone(),
+    };
     let (request_url, api_kind) = normalize_api_url(&settings.api_url);
     let client = Client::new();
     let timer = Instant::now();
@@ -255,7 +270,7 @@ async fn ask(app: AppHandle, question: String) -> Result<HistoryRecord, String> 
                 model: &model,
                 messages: vec![ChatMessage {
                     role: "user",
-                    content: &trimmed_question,
+                    content: &api_question,
                 }],
             };
 
@@ -269,7 +284,7 @@ async fn ask(app: AppHandle, question: String) -> Result<HistoryRecord, String> 
         ApiKind::Responses => {
             let payload = ResponsesRequest {
                 model: &model,
-                input: &trimmed_question,
+                input: &api_question,
             };
 
             client
