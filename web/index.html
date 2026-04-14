@@ -8,16 +8,10 @@
   </head>
   <body>
     <div class="app-shell">
-      <header class="topbar">
-        <div>
-          <p class="eyebrow">Local Answerer</p>
-          <h1>回答者</h1>
-        </div>
-        <div class="topbar-actions">
-          <div id="config-status" class="status-pill">未配置 API</div>
-          <button id="toggle-settings" class="ghost-button" type="button">设置</button>
-        </div>
-      </header>
+      <div class="top-left-tools">
+        <span id="config-status" class="status-pill">未配置 API</span>
+        <button id="toggle-settings" class="ghost-button" type="button">设置</button>
+      </div>
 
       <section id="settings-panel" class="settings-panel hidden">
         <div class="settings-header">
@@ -48,18 +42,9 @@
       </section>
 
       <main class="chat-card">
-        <div class="chat-header">
-          <div>
-            <p class="eyebrow">Chat</p>
-            <h2>当前问答</h2>
-          </div>
-          <div id="chat-meta" class="chat-meta">历史消息会在这里连续显示</div>
-        </div>
-
         <div id="empty-state" class="empty-state">
           先在设置里填好 `API URL` 和 `API Key`，然后就可以开始提问。
         </div>
-
         <div id="chat-list" class="chat-list"></div>
       </main>
 

@@ -33,6 +33,7 @@ struct HistoryRecord {
     id: i64,
     question: String,
     answer: String,
+    raw_response: Option<String>,
     created_at: i64,
     model: String,
     api_url: String,
@@ -171,7 +172,7 @@ fn get_history_item(app: AppHandle, id: i64) -> Result<HistoryRecord, String> {
     let connection = open_database(&app)?;
     connection
         .query_row(
-            "SELECT id, question, answer, created_at, model, api_url, latency_ms, status, error_message
+            "SELECT id, question, answer, raw_response, created_at, model, api_url, latency_ms, status, error_message
              FROM qa_records
              WHERE id = ?1",
             [id],
@@ -180,12 +181,13 @@ fn get_history_item(app: AppHandle, id: i64) -> Result<HistoryRecord, String> {
                     id: row.get(0)?,
                     question: row.get(1)?,
                     answer: row.get(2)?,
-                    created_at: row.get(3)?,
-                    model: row.get(4)?,
-                    api_url: row.get(5)?,
-                    latency_ms: row.get(6)?,
-                    status: row.get(7)?,
-                    error_message: row.get(8)?,
+                    raw_response: row.get(3)?,
+                    created_at: row.get(4)?,
+                    model: row.get(5)?,
+                    api_url: row.get(6)?,
+                    latency_ms: row.get(7)?,
+                    status: row.get(8)?,
+                    error_message: row.get(9)?,
                 })
             },
         )
@@ -197,7 +199,7 @@ fn list_history_records(app: AppHandle) -> Result<Vec<HistoryRecord>, String> {
     let connection = open_database(&app)?;
     let mut statement = connection
         .prepare(
-            "SELECT id, question, answer, created_at, model, api_url, latency_ms, status, error_message
+            "SELECT id, question, answer, raw_response, created_at, model, api_url, latency_ms, status, error_message
              FROM qa_records
              ORDER BY created_at ASC, id ASC",
         )
@@ -209,12 +211,13 @@ fn list_history_records(app: AppHandle) -> Result<Vec<HistoryRecord>, String> {
                 id: row.get(0)?,
                 question: row.get(1)?,
                 answer: row.get(2)?,
-                created_at: row.get(3)?,
-                model: row.get(4)?,
-                api_url: row.get(5)?,
-                latency_ms: row.get(6)?,
-                status: row.get(7)?,
-                error_message: row.get(8)?,
+                raw_response: row.get(3)?,
+                created_at: row.get(4)?,
+                model: row.get(5)?,
+                api_url: row.get(6)?,
+                latency_ms: row.get(7)?,
+                status: row.get(8)?,
+                error_message: row.get(9)?,
             })
         })
         .map_err(|error| format!("Failed to read history records: {error}"))?;
@@ -286,6 +289,7 @@ async fn ask(app: AppHandle, question: String) -> Result<HistoryRecord, String> 
                 &app,
                 &trimmed_question,
                 "",
+                None,
                 created_at,
                 &model,
                 &request_url,
@@ -310,6 +314,7 @@ async fn ask(app: AppHandle, question: String) -> Result<HistoryRecord, String> 
             &app,
             &trimmed_question,
             "",
+            Some(&raw_body),
             created_at,
             &model,
             &request_url,
@@ -330,6 +335,7 @@ async fn ask(app: AppHandle, question: String) -> Result<HistoryRecord, String> 
         &app,
         &trimmed_question,
         &answer,
+        Some(&raw_body),
         created_at,
         &model,
         &request_url,
@@ -342,6 +348,7 @@ async fn ask(app: AppHandle, question: String) -> Result<HistoryRecord, String> 
         id: record_id,
         question: trimmed_question,
         answer,
+        raw_response: Some(raw_body),
         created_at,
         model,
         api_url: request_url,
@@ -456,6 +463,7 @@ fn insert_record(
     app: &AppHandle,
     question: &str,
     answer: &str,
+    raw_response: Option<&str>,
     created_at: i64,
     model: &str,
     api_url: &str,
@@ -466,11 +474,12 @@ fn insert_record(
     let connection = open_database(app)?;
     connection
         .execute(
-            "INSERT INTO qa_records (question, answer, created_at, model, api_url, latency_ms, status, error_message)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO qa_records (question, answer, raw_response, created_at, model, api_url, latency_ms, status, error_message)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 question,
                 answer,
+                raw_response,
                 created_at,
                 model,
                 api_url,
@@ -497,6 +506,7 @@ fn open_database(app: &AppHandle) -> Result<Connection, String> {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 question TEXT NOT NULL,
                 answer TEXT NOT NULL,
+                raw_response TEXT,
                 created_at INTEGER NOT NULL,
                 model TEXT NOT NULL,
                 api_url TEXT NOT NULL,
@@ -506,6 +516,10 @@ fn open_database(app: &AppHandle) -> Result<Connection, String> {
             );",
         )
         .map_err(|error| format!("Failed to initialize database: {error}"))?;
+
+    connection
+        .execute_batch("ALTER TABLE qa_records ADD COLUMN raw_response TEXT;")
+        .ok();
 
     Ok(connection)
 }
