@@ -8,73 +8,126 @@
   </head>
   <body>
     <div class="app-shell">
-      <div class="top-left-tools">
-        <span id="config-status" class="status-pill">未配置 API</span>
-        <button id="toggle-settings" class="ghost-button" type="button">设置</button>
-      </div>
+      <aside class="conversation-sidebar">
+        <div class="conversation-sidebar-header">
+          <button id="create-conversation" class="primary-button sidebar-create-button" type="button">新增对话窗口</button>
+          <button id="toggle-conversation-delete" class="ghost-button sidebar-delete-toggle" type="button" title="切换删除对话">
+            🗑
+          </button>
+        </div>
+        <div id="conversation-list" class="conversation-list"></div>
+      </aside>
 
-      <section id="settings-panel" class="settings-panel hidden">
-        <div class="settings-header">
-          <div>
-            <p class="eyebrow">Settings</p>
-            <h2>接口配置</h2>
+      <section class="app-main">
+        <div class="top-left-tools">
+          <span id="config-status" class="status-pill">未配置 API</span>
+          <button id="toggle-settings" class="ghost-button" type="button">设置</button>
+          <button id="toggle-knowledge" class="ghost-button" type="button">知识地图</button>
+        </div>
+
+        <section id="settings-panel" class="settings-panel hidden">
+          <div class="settings-header">
+            <div>
+              <p class="eyebrow">Settings</p>
+              <h2>接口配置</h2>
+            </div>
+            <button id="save-settings" class="ghost-button" type="button">保存配置</button>
           </div>
-          <button id="save-settings" class="ghost-button" type="button">保存配置</button>
-        </div>
 
-        <div class="settings-grid">
-          <label class="field settings-span-2">
-            <span>API URL</span>
-            <input id="api-url" type="text" placeholder="https://api.openai.com/v1" />
-            <small class="field-hint">
-              可填写 `https://api.openai.com/v1`、`.../chat/completions` 或 `.../responses`
-            </small>
+          <div class="settings-grid">
+            <label class="field settings-span-2">
+              <span>API URL</span>
+              <input id="api-url" type="text" placeholder="https://api.openai.com/v1" />
+              <small class="field-hint">
+                可填写 `https://api.openai.com/v1`、`.../chat/completions` 或 `.../responses`
+              </small>
+            </label>
+            <label class="field settings-span-3">
+              <span>API Key</span>
+              <input id="api-key" type="password" placeholder="sk-..." />
+            </label>
+            <label class="field settings-span-3">
+              <span>主题配色</span>
+              <select id="theme-select">
+                <option value="default-theme">默认配色</option>
+                <option value="quiet-blue-purple-gray">静谧蓝紫灰</option>
+                <option value="cream-macaron">奶油马卡龙</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <main class="main-card">
+          <section id="chat-view" class="view-panel">
+            <div id="empty-state" class="empty-state">
+              这是一个空白对话窗口，直接输入问题开始对话。
+            </div>
+            <div id="chat-list" class="chat-list"></div>
+          </section>
+
+          <section id="knowledge-view" class="view-panel hidden">
+            <div class="knowledge-toolbar">
+              <div>
+                <p class="eyebrow">Knowledge</p>
+                <h2>主题地图</h2>
+              </div>
+              <div class="knowledge-toolbar-actions">
+                <button id="today-filter" class="ghost-button" type="button">今日</button>
+                <button id="build-knowledge" class="ghost-button" type="button">立即整理</button>
+              </div>
+            </div>
+
+            <div id="knowledge-status" class="knowledge-status">
+              知识库会在后台每小时自动检查一次。
+            </div>
+
+            <div class="knowledge-layout">
+              <aside class="knowledge-sidebar">
+                <div id="knowledge-node-list" class="knowledge-node-list"></div>
+              </aside>
+
+              <section class="knowledge-main">
+                <div id="knowledge-map-empty" class="empty-state">
+                  还没有知识节点。继续提问，或点击“立即整理”生成第一版主题地图。
+                </div>
+
+                <div id="knowledge-map-stage" class="knowledge-map-stage hidden">
+                  <svg id="knowledge-map-lines" class="knowledge-map-lines"></svg>
+                  <div id="knowledge-map-nodes" class="knowledge-map-nodes"></div>
+                </div>
+
+                <div id="knowledge-detail" class="knowledge-detail">
+                  选中一个节点后，会在这里看到知识摘要、关联问题和邻接节点。
+                </div>
+              </section>
+            </div>
+          </section>
+        </main>
+
+        <form id="ask-form" class="composer">
+          <label class="field composer-field">
+            <span>输入问题</span>
+            <textarea
+              id="question-input"
+              rows="4"
+              placeholder="输入一个不会污染主工作流上下文的小问题..."
+            ></textarea>
           </label>
-          <label class="field">
-            <span>Model</span>
-            <input id="model" type="text" placeholder="gpt-4.1-mini" />
-          </label>
-          <label class="field settings-span-3">
-            <span>API Key</span>
-            <input id="api-key" type="password" placeholder="sk-..." />
-          </label>
-          <label class="field settings-span-3">
-            <span>主题配色</span>
-            <select id="theme-select">
-              <option value="default-theme">默认配色</option>
-              <option value="quiet-blue-purple-gray">静谧蓝紫灰</option>
-              <option value="cream-macaron">奶油马卡龙</option>
-            </select>
-          </label>
-        </div>
+          <div class="composer-actions">
+            <div class="composer-meta">
+              <div class="composer-buttons composer-mode-row">
+                <button id="memory-mode-toggle" class="ghost-button" type="button">单点</button>
+              </div>
+              <div id="form-message" class="form-message"></div>
+            </div>
+            <div class="composer-buttons">
+              <button id="ask-button" class="primary-button" type="submit">发送</button>
+            </div>
+          </div>
+        </form>
       </section>
-
-      <main class="chat-card">
-        <div id="empty-state" class="empty-state">
-          先在设置里填好 `API URL` 和 `API Key`，然后就可以开始提问。
-        </div>
-        <div id="chat-list" class="chat-list"></div>
-      </main>
-
-      <form id="ask-form" class="composer">
-        <label class="field composer-field">
-          <span>输入问题</span>
-          <textarea
-            id="question-input"
-            rows="4"
-            placeholder="输入一个不会污染主工作流上下文的小问题..."
-          ></textarea>
-        </label>
-        <div class="composer-actions">
-          <div id="form-message" class="form-message"></div>
-          <div class="composer-buttons">
-            <button id="concise-toggle" class="ghost-button" type="button">简洁回复</button>
-            <button id="ask-button" class="primary-button" type="submit">发送</button>
-          </div>
-        </div>
-      </form>
     </div>
 
-    <script src="./app.js"></script>
+    <script type="module" src="./app.js"></script>
   </body>
 </html>

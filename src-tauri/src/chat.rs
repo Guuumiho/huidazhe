@@ -1,0 +1,736 @@
+use super::*;
+use std::time::Instant;
+
+#[tauri::command]
+pub(crate) fn list_conversations(app: AppHandle) -> Result<Vec<ConversationSummary>, String> {
+    let connection = crate::storage::open_database(&app)?;
+    ensure_initial_conversation(&connection)?;
+
+    let mut statement = connection
+        .prepare(
+            "SELECT id, title, mode, created_at, updated_at
+             FROM conversations
+             ORDER BY updated_at DESC, id DESC",
+        )
+        .map_err(|error| format!("Failed to read conversations: {error}"))?;
+
+    let rows = statement
+        .query_map([], |row| {
+            Ok(ConversationSummary {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                mode: row.get(2)?,
+                created_at: row.get(3)?,
+                updated_at: row.get(4)?,
+            })
+        })
+        .map_err(|error| format!("Failed to read conversations: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Failed to read conversations: {error}"))
+}
+
+#[tauri::command]
+pub(crate) fn create_conversation(app: AppHandle) -> Result<ConversationSummary, String> {
+    let connection = crate::storage::open_database(&app)?;
+    let now = Utc::now().timestamp_millis();
+    let title = format!("新对话 {}", chrono::Local::now().format("%m/%d %H:%M"));
+
+    connection
+        .execute(
+            "INSERT INTO conversations (title, mode, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![title, "single", now, now],
+        )
+        .map_err(|error| format!("Failed to create conversation: {error}"))?;
+
+    let id = connection.last_insert_rowid();
+    Ok(ConversationSummary {
+        id,
+        title: connection
+            .query_row("SELECT title FROM conversations WHERE id = ?1", [id], |row| row.get(0))
+            .map_err(|error| format!("Failed to read new conversation: {error}"))?,
+        mode: "single".to_string(),
+        created_at: now,
+        updated_at: now,
+    })
+}
+
+#[tauri::command]
+pub(crate) fn delete_conversation(app: AppHandle, conversation_id: i64) -> Result<Vec<ConversationSummary>, String> {
+    let connection = crate::storage::open_database(&app)?;
+    ensure_initial_conversation(&connection)?;
+
+    let total_count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM conversations", [], |row| row.get(0))
+        .map_err(|error| format!("Failed to count conversations: {error}"))?;
+
+    if total_count <= 1 {
+        return Err("At least one conversation must remain.".to_string());
+    }
+
+    connection
+        .execute("DELETE FROM qa_records WHERE conversation_id = ?1", [conversation_id])
+        .map_err(|error| format!("Failed to delete conversation history: {error}"))?;
+
+    connection
+        .execute("DELETE FROM conversations WHERE id = ?1", [conversation_id])
+        .map_err(|error| format!("Failed to delete conversation: {error}"))?;
+
+    let mut statement = connection
+        .prepare(
+            "SELECT id, title, mode, created_at, updated_at
+             FROM conversations
+             ORDER BY updated_at DESC, id DESC",
+        )
+        .map_err(|error| format!("Failed to reload conversations: {error}"))?;
+
+    let rows = statement
+        .query_map([], |row| {
+            Ok(ConversationSummary {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                mode: row.get(2)?,
+                created_at: row.get(3)?,
+                updated_at: row.get(4)?,
+            })
+        })
+        .map_err(|error| format!("Failed to reload conversations: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Failed to reload conversations: {error}"))
+}
+
+#[tauri::command]
+pub(crate) fn update_conversation_mode(
+    app: AppHandle,
+    conversation_id: i64,
+    mode: String,
+) -> Result<ConversationSummary, String> {
+    let connection = crate::storage::open_database(&app)?;
+    let normalized_mode = if mode == "memory" { "memory" } else { "single" };
+    let updated_at = Utc::now().timestamp_millis();
+
+    connection
+        .execute(
+            "UPDATE conversations
+             SET mode = ?1, updated_at = ?2
+             WHERE id = ?3",
+            params![normalized_mode, updated_at, conversation_id],
+        )
+        .map_err(|error| format!("Failed to update conversation mode: {error}"))?;
+
+    load_conversation_summary(&connection, conversation_id)
+}
+
+#[tauri::command]
+pub(crate) fn list_history(app: AppHandle) -> Result<Vec<HistorySummary>, String> {
+    let connection = crate::storage::open_database(&app)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT id, question, created_at, status
+             FROM qa_records
+             ORDER BY created_at DESC, id DESC",
+        )
+        .map_err(|error| format!("Failed to read history: {error}"))?;
+
+    let rows = statement
+        .query_map([], |row| {
+            let question: String = row.get(1)?;
+            Ok(HistorySummary {
+                id: row.get(0)?,
+                question_preview: summarize_question(&question),
+                created_at: row.get(2)?,
+                status: row.get(3)?,
+            })
+        })
+        .map_err(|error| format!("Failed to read history: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Failed to read history: {error}"))
+}
+
+#[tauri::command]
+pub(crate) fn get_history_item(app: AppHandle, id: i64) -> Result<HistoryRecord, String> {
+    let connection = crate::storage::open_database(&app)?;
+    connection
+        .query_row(
+            "SELECT id, conversation_id, question, answer, raw_response, created_at, model, api_url, latency_ms, status, error_message
+             FROM qa_records
+             WHERE id = ?1",
+            [id],
+            |row| map_history_record(row),
+        )
+        .map_err(|error| format!("Failed to read history details: {error}"))
+}
+
+#[tauri::command]
+pub(crate) fn list_history_records(app: AppHandle, conversation_id: i64) -> Result<Vec<HistoryRecord>, String> {
+    let connection = crate::storage::open_database(&app)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT id, conversation_id, question, answer, raw_response, created_at, model, api_url, latency_ms, status, error_message
+             FROM qa_records
+             WHERE conversation_id = ?1
+             ORDER BY created_at ASC, id ASC",
+        )
+        .map_err(|error| format!("Failed to read history records: {error}"))?;
+
+    let rows = statement
+        .query_map([conversation_id], map_history_record)
+        .map_err(|error| format!("Failed to read history records: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Failed to read history records: {error}"))
+}
+
+#[tauri::command]
+pub(crate) async fn ask(
+    app: AppHandle,
+    conversation_id: i64,
+    question: String,
+    use_short_term_memory: Option<bool>,
+) -> Result<HistoryRecord, String> {
+    let trimmed_question = question.trim().to_string();
+    if trimmed_question.is_empty() {
+        return Err("Question cannot be empty.".to_string());
+    }
+
+    let settings = crate::settings::load_settings(app.clone())?;
+    if settings.api_url.trim().is_empty() || settings.api_key.trim().is_empty() {
+        return Err("Please fill in and save API URL and API Key first.".to_string());
+    }
+
+    let model = ASK_MODEL.to_string();
+    let created_at = Utc::now().timestamp_millis();
+    let api_question = format!("{}{}", ASK_CONCISE_PREFIX, trimmed_question);
+    let short_term_memory = if use_short_term_memory.unwrap_or(false) {
+        fetch_short_term_memory(&app, conversation_id, SHORT_TERM_MEMORY_ROUNDS)?
+    } else {
+        Vec::new()
+    };
+
+    let timer = Instant::now();
+    let (normalized_url, _) = normalize_api_url(&settings.api_url);
+    let raw_body = match send_model_text_request(
+        &app,
+        &settings,
+        &model,
+        "chat_answer",
+        None,
+        &api_question,
+        &short_term_memory,
+    )
+    .await
+    {
+        Ok(raw_body) => raw_body,
+        Err(error) => {
+            let message = format!("Request failed: {error}");
+            insert_record(
+                &app,
+                conversation_id,
+                &trimmed_question,
+                "",
+                None,
+                created_at,
+                &model,
+                &normalized_url,
+                Some(timer.elapsed().as_millis() as i64),
+                "error",
+                Some(&message),
+            )?;
+            update_conversation_after_message(
+                &crate::storage::open_database(&app)?,
+                conversation_id,
+                &trimmed_question,
+                created_at,
+            )?;
+            return Err(message);
+        }
+    };
+
+    let latency_ms = timer.elapsed().as_millis() as i64;
+    let answer = parse_model_text(&settings.api_url, &raw_body)
+        .map_err(|error| format!("Failed to parse model response: {error}"))?;
+
+    let record_id = insert_record(
+        &app,
+        conversation_id,
+        &trimmed_question,
+        &answer,
+        Some(&raw_body),
+        created_at,
+        &model,
+        &normalized_url,
+        Some(latency_ms),
+        "success",
+        None,
+    )?;
+
+    update_conversation_after_message(
+        &crate::storage::open_database(&app)?,
+        conversation_id,
+        &trimmed_question,
+        created_at,
+    )?;
+
+    Ok(HistoryRecord {
+        id: record_id,
+        conversation_id,
+        question: trimmed_question,
+        answer,
+        raw_response: Some(raw_body),
+        created_at,
+        model,
+        api_url: normalized_url,
+        latency_ms: Some(latency_ms),
+        status: "success".to_string(),
+        error_message: None,
+    })
+}
+
+pub(crate) async fn send_model_text_request(
+    app: &AppHandle,
+    settings: &Settings,
+    model: &str,
+    purpose: &str,
+    system_prompt: Option<&str>,
+    user_prompt: &str,
+    short_term_memory: &[MemoryMessage],
+) -> Result<String, String> {
+    let (request_url, api_kind) = normalize_api_url(&settings.api_url);
+    let client = Client::new();
+
+    let (request_body, response) = match api_kind {
+        ApiKind::ChatCompletions => {
+            let mut messages = Vec::new();
+            if let Some(system_prompt) = system_prompt {
+                messages.push(ChatMessage {
+                    role: "system",
+                    content: system_prompt,
+                });
+            }
+            for memory_message in short_term_memory {
+                messages.push(ChatMessage {
+                    role: &memory_message.role,
+                    content: &memory_message.content,
+                });
+            }
+            messages.push(ChatMessage {
+                role: "user",
+                content: user_prompt,
+            });
+
+            let payload = ChatCompletionRequest { model, messages };
+            let request_body =
+                serde_json::to_value(&payload).map_err(|error| format!("Failed to serialize request body: {error}"))?;
+            let response = client
+                .post(&request_url)
+                .bearer_auth(&settings.api_key)
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|error| {
+                    let error_message = error.to_string();
+                    let _ = crate::storage::append_model_call_log(
+                        app,
+                        &ModelCallLogEntry {
+                            timestamp: Utc::now().timestamp_millis(),
+                            purpose: purpose.to_string(),
+                            model: model.to_string(),
+                            api_url: request_url.clone(),
+                            api_kind: "chat_completions".to_string(),
+                            request_body: request_body.clone(),
+                            response_status: None,
+                            response_ok: false,
+                            response_body: None,
+                            error: Some(error_message.clone()),
+                        },
+                    );
+                    error_message
+                })?;
+            (request_body, response)
+        }
+        ApiKind::Responses => {
+            let combined_prompt = build_responses_input(system_prompt, short_term_memory, user_prompt);
+            let payload = ResponsesRequest {
+                model,
+                input: &combined_prompt,
+            };
+            let request_body =
+                serde_json::to_value(&payload).map_err(|error| format!("Failed to serialize request body: {error}"))?;
+            let response = client
+                .post(&request_url)
+                .bearer_auth(&settings.api_key)
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|error| {
+                    let error_message = error.to_string();
+                    let _ = crate::storage::append_model_call_log(
+                        app,
+                        &ModelCallLogEntry {
+                            timestamp: Utc::now().timestamp_millis(),
+                            purpose: purpose.to_string(),
+                            model: model.to_string(),
+                            api_url: request_url.clone(),
+                            api_kind: "responses".to_string(),
+                            request_body: request_body.clone(),
+                            response_status: None,
+                            response_ok: false,
+                            response_body: None,
+                            error: Some(error_message.clone()),
+                        },
+                    );
+                    error_message
+                })?;
+            (request_body, response)
+        }
+    };
+
+    let status = response.status();
+    let raw_body = response
+        .text()
+        .await
+        .map_err(|error| format!("Failed to read response body: {error}"))?;
+
+    let api_kind_label = match api_kind {
+        ApiKind::ChatCompletions => "chat_completions",
+        ApiKind::Responses => "responses",
+    };
+    let status_u16 = status.as_u16();
+    let status_ok = status.is_success();
+
+    let _ = crate::storage::append_model_call_log(
+        app,
+        &ModelCallLogEntry {
+            timestamp: Utc::now().timestamp_millis(),
+            purpose: purpose.to_string(),
+            model: model.to_string(),
+            api_url: request_url.clone(),
+            api_kind: api_kind_label.to_string(),
+            request_body,
+            response_status: Some(status_u16),
+            response_ok: status_ok,
+            response_body: Some(raw_body.clone()),
+            error: if status_ok {
+                None
+            } else {
+                Some(format!("API returned an error ({status}): {raw_body}"))
+            },
+        },
+    );
+
+    if !status_ok {
+        return Err(format!("API returned an error ({status}): {raw_body}"));
+    }
+
+    Ok(raw_body)
+}
+
+fn build_responses_input(
+    system_prompt: Option<&str>,
+    short_term_memory: &[MemoryMessage],
+    user_prompt: &str,
+) -> String {
+    let mut sections = Vec::new();
+
+    if let Some(system_prompt) = system_prompt {
+        sections.push(format!("System:\n{system_prompt}"));
+    }
+
+    if !short_term_memory.is_empty() {
+        let memory_text = short_term_memory
+            .iter()
+            .map(|message| match message.role.as_str() {
+                "assistant" => format!("Assistant:\n{}", message.content),
+                _ => format!("User:\n{}", message.content),
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        sections.push(format!("Recent conversation context:\n{memory_text}"));
+    }
+
+    sections.push(format!("User:\n{user_prompt}"));
+    sections.join("\n\n")
+}
+
+fn parse_model_text(api_url: &str, raw_body: &str) -> Result<String, String> {
+    match normalize_api_url(api_url).1 {
+        ApiKind::ChatCompletions => parse_chat_completion_text(raw_body),
+        ApiKind::Responses => parse_responses_text(raw_body),
+    }
+}
+
+pub(crate) fn normalize_api_url(input: &str) -> (String, ApiKind) {
+    let trimmed = input.trim().trim_end_matches('/').to_string();
+    if trimmed.ends_with("/responses") || trimmed.ends_with("/v1/responses") {
+        return (trimmed, ApiKind::Responses);
+    }
+    if trimmed.ends_with("/chat/completions") || trimmed.ends_with("/v1/chat/completions") {
+        return (trimmed, ApiKind::ChatCompletions);
+    }
+    if trimmed.ends_with("/v1") {
+        return (format!("{trimmed}/chat/completions"), ApiKind::ChatCompletions);
+    }
+    if trimmed.contains("/v1/") {
+        return (trimmed, ApiKind::ChatCompletions);
+    }
+
+    (format!("{trimmed}/v1/chat/completions"), ApiKind::ChatCompletions)
+}
+
+fn parse_chat_completion_text(raw_body: &str) -> Result<String, String> {
+    let parsed: ChatCompletionResponse =
+        serde_json::from_str(raw_body).map_err(|error| error.to_string())?;
+
+    let first = parsed
+        .choices
+        .into_iter()
+        .next()
+        .ok_or_else(|| "No choices returned by the API.".to_string())?;
+
+    extract_content_value(first.message.content)
+}
+
+fn extract_content_value(value: serde_json::Value) -> Result<String, String> {
+    match value {
+        serde_json::Value::String(text) => Ok(text),
+        serde_json::Value::Array(items) => {
+            let mut buffer = Vec::new();
+            for item in items {
+                if let Some(text) = item.get("text").and_then(|inner| inner.as_str()) {
+                    buffer.push(text.to_string());
+                }
+            }
+
+            if buffer.is_empty() {
+                Err("Could not extract text from the message content.".to_string())
+            } else {
+                Ok(buffer.join("\n"))
+            }
+        }
+        _ => Err("Unsupported message content format.".to_string()),
+    }
+}
+
+fn parse_responses_text(raw_body: &str) -> Result<String, String> {
+    let parsed: ResponsesApiResponse = serde_json::from_str(raw_body).map_err(|error| error.to_string())?;
+
+    if let Some(output_text) = parsed.output_text {
+        if !output_text.trim().is_empty() {
+            return Ok(output_text);
+        }
+    }
+
+    let mut chunks = Vec::new();
+    if let Some(output) = parsed.output {
+        for item in output {
+            if let Some(content) = item.content {
+                for content_item in content {
+                    if let Some(text) = content_item.text {
+                        if !text.trim().is_empty() {
+                            chunks.push(text);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if chunks.is_empty() {
+        Err("Could not extract text from the Responses API payload.".to_string())
+    } else {
+        Ok(chunks.join("\n"))
+    }
+}
+
+pub(crate) fn sanitize_text(text: &str, max_chars: usize) -> String {
+    let sanitized = text.replace('\n', " ").trim().to_string();
+    let mut chars = sanitized.chars();
+    let preview: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{preview}...")
+    } else {
+        preview
+    }
+}
+
+pub(crate) fn summarize_question(question: &str) -> String {
+    sanitize_text(question, 54)
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    let mut chars = text.chars();
+    let preview: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{preview}...")
+    } else {
+        preview
+    }
+}
+
+fn fetch_short_term_memory(app: &AppHandle, conversation_id: i64, rounds: usize) -> Result<Vec<MemoryMessage>, String> {
+    let connection = crate::storage::open_database(app)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT question, answer
+             FROM qa_records
+             WHERE status = 'success'
+               AND answer <> ''
+               AND conversation_id = ?1
+             ORDER BY created_at DESC, id DESC
+             LIMIT ?2",
+        )
+        .map_err(|error| format!("Failed to read short-term memory: {error}"))?;
+
+    let rows = statement
+        .query_map(params![conversation_id, rounds as i64], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| format!("Failed to read short-term memory: {error}"))?;
+
+    let mut pairs = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Failed to read short-term memory: {error}"))?;
+    pairs.reverse();
+
+    let mut messages = Vec::new();
+    for (question, answer) in pairs {
+        messages.push(MemoryMessage {
+            role: "user".to_string(),
+            content: question,
+        });
+        messages.push(MemoryMessage {
+            role: "assistant".to_string(),
+            content: truncate_chars(&answer, SHORT_TERM_ASSISTANT_CHAR_LIMIT),
+        });
+    }
+
+    Ok(messages)
+}
+
+fn insert_record(
+    app: &AppHandle,
+    conversation_id: i64,
+    question: &str,
+    answer: &str,
+    raw_response: Option<&str>,
+    created_at: i64,
+    model: &str,
+    api_url: &str,
+    latency_ms: Option<i64>,
+    status: &str,
+    error_message: Option<&str>,
+) -> Result<i64, String> {
+    let connection = crate::storage::open_database(app)?;
+    connection
+        .execute(
+            "INSERT INTO qa_records (conversation_id, question, answer, raw_response, created_at, model, api_url, latency_ms, status, error_message)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                conversation_id,
+                question,
+                answer,
+                raw_response,
+                created_at,
+                model,
+                api_url,
+                latency_ms,
+                status,
+                error_message
+            ],
+        )
+        .map_err(|error| format!("Failed to write history: {error}"))?;
+
+    Ok(connection.last_insert_rowid())
+}
+
+fn map_history_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryRecord> {
+    Ok(HistoryRecord {
+        id: row.get(0)?,
+        conversation_id: row.get(1)?,
+        question: row.get(2)?,
+        answer: row.get(3)?,
+        raw_response: row.get(4)?,
+        created_at: row.get(5)?,
+        model: row.get(6)?,
+        api_url: row.get(7)?,
+        latency_ms: row.get(8)?,
+        status: row.get(9)?,
+        error_message: row.get(10)?,
+    })
+}
+
+fn ensure_initial_conversation(connection: &Connection) -> Result<(), String> {
+    let count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM conversations", [], |row| row.get(0))
+        .map_err(|error| format!("Failed to inspect conversations: {error}"))?;
+
+    if count > 0 {
+        return Ok(());
+    }
+
+    let now = Utc::now().timestamp_millis();
+    connection
+        .execute(
+            "INSERT INTO conversations (title, mode, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params!["新对话", "single", now, now],
+        )
+        .map_err(|error| format!("Failed to create initial conversation: {error}"))?;
+
+    Ok(())
+}
+
+fn load_conversation_summary(connection: &Connection, conversation_id: i64) -> Result<ConversationSummary, String> {
+    connection
+        .query_row(
+            "SELECT id, title, mode, created_at, updated_at
+             FROM conversations
+             WHERE id = ?1",
+            [conversation_id],
+            |row| {
+                Ok(ConversationSummary {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    mode: row.get(2)?,
+                    created_at: row.get(3)?,
+                    updated_at: row.get(4)?,
+                })
+            },
+        )
+        .map_err(|error| format!("Failed to load conversation: {error}"))
+}
+
+fn update_conversation_after_message(
+    connection: &Connection,
+    conversation_id: i64,
+    question: &str,
+    updated_at: i64,
+) -> Result<(), String> {
+    let current_title: String = connection
+        .query_row(
+            "SELECT title FROM conversations WHERE id = ?1",
+            [conversation_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("Failed to read conversation title: {error}"))?;
+
+    let next_title = if current_title.starts_with("新对话") {
+        summarize_question(question)
+    } else {
+        current_title
+    };
+
+    connection
+        .execute(
+            "UPDATE conversations
+             SET title = ?1, updated_at = ?2
+             WHERE id = ?3",
+            params![next_title, updated_at, conversation_id],
+        )
+        .map_err(|error| format!("Failed to update conversation metadata: {error}"))?;
+
+    Ok(())
+}
