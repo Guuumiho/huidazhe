@@ -35,6 +35,9 @@ export const els = {
   composer: document.querySelector('#ask-form'),
 };
 
+const QUESTION_INPUT_BASE_HEIGHT = 56;
+const QUESTION_INPUT_EXPANDED_HEIGHT = 112;
+
 export function ensureTauri() {
   if (!invoke) {
     throw new Error('Tauri bridge is not available. Please run inside the desktop app.');
@@ -125,4 +128,26 @@ export function renderView() {
   els.composer.classList.toggle('hidden', showingKnowledge);
   els.toggleKnowledge.classList.toggle('active', showingKnowledge);
   els.toggleKnowledge.textContent = showingKnowledge ? '回到问答' : '知识地图';
+}
+
+export function resizeQuestionInput() {
+  const input = els.questionInput;
+  if (!input) {
+    return;
+  }
+
+  input.style.height = `${QUESTION_INPUT_BASE_HEIGHT}px`;
+  const nextHeight = Math.min(
+    Math.max(input.scrollHeight, QUESTION_INPUT_BASE_HEIGHT),
+    QUESTION_INPUT_EXPANDED_HEIGHT
+  );
+  input.style.height = `${nextHeight}px`;
+}
+
+export function resetQuestionInputHeight() {
+  if (!els.questionInput) {
+    return;
+  }
+
+  els.questionInput.style.height = `${QUESTION_INPUT_BASE_HEIGHT}px`;
 }

@@ -45,6 +45,16 @@ pub(crate) fn create_conversation(app: AppHandle) -> Result<ConversationSummary,
         .map_err(|error| format!("Failed to create conversation: {error}"))?;
 
     let id = connection.last_insert_rowid();
+    let empty_memory =
+        serde_json::to_string(&SessionMemory::default()).map_err(|error| format!("Failed to initialize session memory: {error}"))?;
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO conversation_session_memory (conversation_id, memory_json, updated_at)
+             VALUES (?1, ?2, ?3)",
+            params![id, empty_memory, now],
+        )
+        .map_err(|error| format!("Failed to initialize session memory: {error}"))?;
+
     Ok(ConversationSummary {
         id,
         title: connection
@@ -76,6 +86,13 @@ pub(crate) fn delete_conversation(app: AppHandle, conversation_id: i64) -> Resul
     connection
         .execute("DELETE FROM conversations WHERE id = ?1", [conversation_id])
         .map_err(|error| format!("Failed to delete conversation: {error}"))?;
+
+    connection
+        .execute(
+            "DELETE FROM conversation_session_memory WHERE conversation_id = ?1",
+            [conversation_id],
+        )
+        .map_err(|error| format!("Failed to delete conversation memory: {error}"))?;
 
     let mut statement = connection
         .prepare(
@@ -203,7 +220,12 @@ pub(crate) async fn ask(
 
     let model = ASK_MODEL.to_string();
     let created_at = Utc::now().timestamp_millis();
-    let api_question = format!("{}{}", ASK_CONCISE_PREFIX, trimmed_question);
+    let session_memory = if use_short_term_memory.unwrap_or(false) {
+        load_session_memory(&app, conversation_id)?
+    } else {
+        SessionMemory::default()
+    };
+    let system_prompt = build_chat_system_prompt(&session_memory);
     let short_term_memory = if use_short_term_memory.unwrap_or(false) {
         fetch_short_term_memory(&app, conversation_id, SHORT_TERM_MEMORY_ROUNDS)?
     } else {
@@ -217,8 +239,8 @@ pub(crate) async fn ask(
         &settings,
         &model,
         "chat_answer",
-        None,
-        &api_question,
+        Some(&system_prompt),
+        &trimmed_question,
         &short_term_memory,
     )
     .await
@@ -242,7 +264,6 @@ pub(crate) async fn ask(
             update_conversation_after_message(
                 &crate::storage::open_database(&app)?,
                 conversation_id,
-                &trimmed_question,
                 created_at,
             )?;
             return Err(message);
@@ -270,9 +291,14 @@ pub(crate) async fn ask(
     update_conversation_after_message(
         &crate::storage::open_database(&app)?,
         conversation_id,
-        &trimmed_question,
         created_at,
     )?;
+
+    let _ = refresh_conversation_title(&app, &settings, conversation_id, &trimmed_question, &answer).await;
+
+    if use_short_term_memory.unwrap_or(false) {
+        let _ = refresh_session_memory(&app, &settings, conversation_id, &trimmed_question, &answer).await;
+    }
 
     Ok(HistoryRecord {
         id: record_id,
@@ -455,6 +481,121 @@ fn build_responses_input(
     sections.join("\n\n")
 }
 
+fn build_chat_system_prompt(session_memory: &SessionMemory) -> String {
+    let session_memory_json =
+        serde_json::to_string(session_memory).unwrap_or_else(|_| "{}".to_string());
+    format!(
+        "[System]\n{}\n\n[Session Memory]\n{}",
+        ASK_SYSTEM_PROMPT, session_memory_json
+    )
+}
+
+async fn refresh_session_memory(
+    app: &AppHandle,
+    settings: &Settings,
+    conversation_id: i64,
+    user_question: &str,
+    assistant_answer: &str,
+) -> Result<(), String> {
+    let old_memory = load_session_memory(app, conversation_id)?;
+    let recent_dialogue = fetch_recent_dialogue_for_memory_update(
+        app,
+        conversation_id,
+        SESSION_MEMORY_RECENT_ROUNDS,
+    )?;
+    let old_memory_json =
+        serde_json::to_string(&old_memory).map_err(|error| format!("Failed to serialize session memory: {error}"))?;
+    let latest_dialogue = format_recent_dialogue(&recent_dialogue, user_question, assistant_answer);
+
+    let system_prompt = "你是一个对话记忆压缩器。你的任务不是复述聊天内容，而是维护“会话状态”。\n\
+请根据“旧的会话记忆”和“最新几轮对话”，输出更新后的会话记忆。\n\
+要求：\n\
+1. 只保留对后续对话有用的信息。\n\
+2. 删除寒暄、重复、无关表述。\n\
+3. 区分“已确认事实”和“推测”。\n\
+4. 明确当前目标、当前进度、待确认问题、下一步动作。\n\
+5. 输出必须是 JSON。\n\
+6. 尽量简洁，但不能遗漏关键约束和关键决策。\n\
+7. 如果新信息与旧信息冲突，以最新且明确确认的信息为准。";
+
+    let user_prompt = format!(
+        "旧的会话记忆：\n{old_memory_json}\n\n最新对话：\n{latest_dialogue}\n\n请输出更新后的会话记忆 JSON，格式如下：\n{{\n  \"session_goal\": \"\",\n  \"confirmed_facts\": [],\n  \"constraints\": [],\n  \"preferences\": [],\n  \"progress\": [],\n  \"open_questions\": [],\n  \"next_action\": \"\",\n  \"key_decisions\": [],\n  \"risks_or_issues\": []\n}}"
+    );
+
+    let raw_text = send_model_text_request(
+        app,
+        settings,
+        AUXILIARY_MODEL,
+        "session_memory_update",
+        Some(system_prompt),
+        &user_prompt,
+        &[],
+    )
+    .await?;
+
+    let parsed_text = parse_model_text(&settings.api_url, &raw_text)
+        .map_err(|error| format!("Failed to parse session memory model response: {error}"))?;
+    let json_text = extract_json_object(&parsed_text)
+        .ok_or_else(|| format!("Session memory update did not return valid JSON: {}", sanitize_text(&parsed_text, 280)))?;
+    let next_memory: SessionMemory = serde_json::from_str(&json_text)
+        .map_err(|error| format!("Failed to parse session memory JSON: {error}"))?;
+    save_session_memory(app, conversation_id, &next_memory)?;
+    Ok(())
+}
+
+async fn refresh_conversation_title(
+    app: &AppHandle,
+    settings: &Settings,
+    conversation_id: i64,
+    question: &str,
+    answer: &str,
+) -> Result<(), String> {
+    let connection = crate::storage::open_database(app)?;
+    let current_title: String = connection
+        .query_row(
+            "SELECT title FROM conversations WHERE id = ?1",
+            [conversation_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("Failed to read conversation title: {error}"))?;
+
+    if !current_title.starts_with("新对话") {
+        return Ok(());
+    }
+
+    let system_prompt = "你是一个对话主题压缩器。请根据用户的第一条问题和对应回答，总结一个 10 字以内的主题。\
+只输出主题本身，不要解释，不要标点，不要换行。";
+    let user_prompt = format!("用户问题：\n{question}\n\n助手回答：\n{answer}");
+    let raw_text = send_model_text_request(
+        app,
+        settings,
+        AUXILIARY_MODEL,
+        "conversation_title",
+        Some(system_prompt),
+        &user_prompt,
+        &[],
+    )
+    .await?;
+
+    let title_text = parse_model_text(&settings.api_url, &raw_text)
+        .map_err(|error| format!("Failed to parse conversation title response: {error}"))?;
+    let next_title = sanitize_generated_title(&title_text);
+    if next_title.is_empty() {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            "UPDATE conversations
+             SET title = ?1
+             WHERE id = ?2",
+            params![next_title, conversation_id],
+        )
+        .map_err(|error| format!("Failed to update conversation title: {error}"))?;
+
+    Ok(())
+}
+
 fn parse_model_text(api_url: &str, raw_body: &str) -> Result<String, String> {
     match normalize_api_url(api_url).1 {
         ApiKind::ChatCompletions => parse_chat_completion_text(raw_body),
@@ -545,6 +686,18 @@ fn parse_responses_text(raw_body: &str) -> Result<String, String> {
     }
 }
 
+fn sanitize_generated_title(text: &str) -> String {
+    let cleaned = text
+        .replace(['\r', '\n'], " ")
+        .replace(['【', '】', '[', ']'], "")
+        .replace("主题：", "")
+        .replace("主题", "")
+        .trim()
+        .to_string();
+
+    cleaned.chars().take(10).collect::<String>().trim().to_string()
+}
+
 pub(crate) fn sanitize_text(text: &str, max_chars: usize) -> String {
     let sanitized = text.replace('\n', " ").trim().to_string();
     let mut chars = sanitized.chars();
@@ -558,16 +711,6 @@ pub(crate) fn sanitize_text(text: &str, max_chars: usize) -> String {
 
 pub(crate) fn summarize_question(question: &str) -> String {
     sanitize_text(question, 54)
-}
-
-fn truncate_chars(text: &str, max_chars: usize) -> String {
-    let mut chars = text.chars();
-    let preview: String = chars.by_ref().take(max_chars).collect();
-    if chars.next().is_some() {
-        format!("{preview}...")
-    } else {
-        preview
-    }
 }
 
 fn fetch_short_term_memory(app: &AppHandle, conversation_id: i64, rounds: usize) -> Result<Vec<MemoryMessage>, String> {
@@ -603,11 +746,124 @@ fn fetch_short_term_memory(app: &AppHandle, conversation_id: i64, rounds: usize)
         });
         messages.push(MemoryMessage {
             role: "assistant".to_string(),
-            content: truncate_chars(&answer, SHORT_TERM_ASSISTANT_CHAR_LIMIT),
+            content: answer,
         });
     }
 
     Ok(messages)
+}
+
+fn load_session_memory(app: &AppHandle, conversation_id: i64) -> Result<SessionMemory, String> {
+    let connection = crate::storage::open_database(app)?;
+    let raw_json: Option<String> = connection
+        .query_row(
+            "SELECT memory_json FROM conversation_session_memory WHERE conversation_id = ?1",
+            [conversation_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("Failed to read session memory: {error}"))?;
+
+    match raw_json {
+        Some(raw_json) => serde_json::from_str(&raw_json)
+            .map_err(|error| format!("Failed to parse session memory: {error}")),
+        None => Ok(SessionMemory::default()),
+    }
+}
+
+fn save_session_memory(
+    app: &AppHandle,
+    conversation_id: i64,
+    session_memory: &SessionMemory,
+) -> Result<(), String> {
+    let connection = crate::storage::open_database(app)?;
+    let memory_json = serde_json::to_string(session_memory)
+        .map_err(|error| format!("Failed to serialize session memory: {error}"))?;
+    let updated_at = Utc::now().timestamp_millis();
+
+    connection
+        .execute(
+            "INSERT INTO conversation_session_memory (conversation_id, memory_json, updated_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(conversation_id) DO UPDATE SET
+               memory_json = excluded.memory_json,
+               updated_at = excluded.updated_at",
+            params![conversation_id, memory_json, updated_at],
+        )
+        .map_err(|error| format!("Failed to write session memory: {error}"))?;
+
+    Ok(())
+}
+
+fn fetch_recent_dialogue_for_memory_update(
+    app: &AppHandle,
+    conversation_id: i64,
+    rounds: usize,
+) -> Result<Vec<(String, String)>, String> {
+    let connection = crate::storage::open_database(app)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT question, answer
+             FROM qa_records
+             WHERE status = 'success'
+               AND answer <> ''
+               AND conversation_id = ?1
+             ORDER BY created_at DESC, id DESC
+             LIMIT ?2",
+        )
+        .map_err(|error| format!("Failed to read recent dialogue: {error}"))?;
+
+    let rows = statement
+        .query_map(params![conversation_id, rounds as i64], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| format!("Failed to read recent dialogue: {error}"))?;
+
+    let mut pairs = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Failed to read recent dialogue: {error}"))?;
+    pairs.reverse();
+    Ok(pairs)
+}
+
+fn format_recent_dialogue(
+    pairs: &[(String, String)],
+    current_question: &str,
+    current_answer: &str,
+) -> String {
+    let mut lines = Vec::new();
+
+    for (question, answer) in pairs {
+        lines.push(format!(
+            "用户: {}\n助手: {}",
+            sanitize_text(question, SESSION_MEMORY_MAX_TEXT_CHARS),
+            sanitize_text(answer, SESSION_MEMORY_MAX_TEXT_CHARS)
+        ));
+    }
+
+    if pairs.is_empty()
+        || pairs
+            .last()
+            .map(|(question, answer)| question != current_question || answer != current_answer)
+            .unwrap_or(true)
+    {
+        lines.push(format!(
+            "用户: {}\n助手: {}",
+            sanitize_text(current_question, SESSION_MEMORY_MAX_TEXT_CHARS),
+            sanitize_text(current_answer, SESSION_MEMORY_MAX_TEXT_CHARS)
+        ));
+    }
+
+    lines.join("\n")
+}
+
+fn extract_json_object(text: &str) -> Option<String> {
+    let start = text.find('{')?;
+    let end = text.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    Some(text[start..=end].to_string())
 }
 
 fn insert_record(
@@ -706,29 +962,14 @@ fn load_conversation_summary(connection: &Connection, conversation_id: i64) -> R
 fn update_conversation_after_message(
     connection: &Connection,
     conversation_id: i64,
-    question: &str,
     updated_at: i64,
 ) -> Result<(), String> {
-    let current_title: String = connection
-        .query_row(
-            "SELECT title FROM conversations WHERE id = ?1",
-            [conversation_id],
-            |row| row.get(0),
-        )
-        .map_err(|error| format!("Failed to read conversation title: {error}"))?;
-
-    let next_title = if current_title.starts_with("新对话") {
-        summarize_question(question)
-    } else {
-        current_title
-    };
-
     connection
         .execute(
             "UPDATE conversations
-             SET title = ?1, updated_at = ?2
-             WHERE id = ?3",
-            params![next_title, updated_at, conversation_id],
+             SET updated_at = ?1
+             WHERE id = ?2",
+            params![updated_at, conversation_id],
         )
         .map_err(|error| format!("Failed to update conversation metadata: {error}"))?;
 

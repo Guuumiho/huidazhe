@@ -6,10 +6,44 @@ import {
   formatTime,
   invoke,
   renderConversationDeleteToggle,
+  resetQuestionInputHeight,
+  resizeQuestionInput,
   setConfigStatus,
   setFormMessage,
   setMemoryMode,
 } from './ui.js';
+
+function getPendingRecords(conversationId) {
+  return state.pendingRecordsByConversation.get(conversationId) || [];
+}
+
+function setPendingRecords(conversationId, records) {
+  if (!records.length) {
+    state.pendingRecordsByConversation.delete(conversationId);
+    return;
+  }
+  state.pendingRecordsByConversation.set(conversationId, records);
+}
+
+function addPendingRecord(conversationId, record) {
+  setPendingRecords(conversationId, [...getPendingRecords(conversationId), record]);
+}
+
+function replacePendingRecord(conversationId, recordId, nextRecord) {
+  setPendingRecords(
+    conversationId,
+    getPendingRecords(conversationId).map((record) =>
+      record.id === recordId ? nextRecord : record
+    )
+  );
+}
+
+function removePendingRecord(conversationId, recordId) {
+  setPendingRecords(
+    conversationId,
+    getPendingRecords(conversationId).filter((record) => record.id !== recordId)
+  );
+}
 
 function appendInlineFormatted(target, text) {
   const parts = text.split(/(\*\*[^*]+\*\*)/g);
@@ -290,7 +324,8 @@ export function renderConversations() {
     const meta = document.createElement('button');
     meta.type = 'button';
     meta.className = 'conversation-meta';
-    meta.textContent = `${conversation.mode === 'memory' ? '记忆' : '单点'} · ${formatTime(conversation.updatedAt)}`;
+    const modeLabel = conversation.mode === 'memory' ? '记忆' : '单点';
+    meta.textContent = `${modeLabel} · ${formatTime(conversation.updatedAt)}`;
     meta.addEventListener('click', async () => {
       await switchConversation(conversation.id);
     });
@@ -322,9 +357,10 @@ export async function loadRecords() {
     return;
   }
 
-  state.records = await invoke('list_history_records', {
+  const databaseRecords = await invoke('list_history_records', {
     conversationId: state.currentConversationId,
   });
+  state.records = [...databaseRecords, ...getPendingRecords(state.currentConversationId)];
   renderRecords();
 }
 
@@ -398,9 +434,10 @@ export async function askQuestion(event) {
   setFormMessage('');
 
   const draftQuestion = els.questionInput.value.trim();
+  const activeConversationId = state.currentConversationId;
   const settings = collectSettings();
 
-  if (!state.currentConversationId) {
+  if (!activeConversationId) {
     setFormMessage('请先创建一个对话窗口。', 'error');
     return;
   }
@@ -420,10 +457,11 @@ export async function askQuestion(event) {
   els.askButton.disabled = true;
   els.saveSettings.disabled = true;
   els.questionInput.value = '';
+  resetQuestionInputHeight();
 
   const tempRecord = {
     id: `pending-${Date.now()}`,
-    conversationId: state.currentConversationId,
+    conversationId: activeConversationId,
     question: draftQuestion,
     answer: 'Thinking...',
     rawResponse: null,
@@ -434,32 +472,48 @@ export async function askQuestion(event) {
     errorMessage: null,
   };
 
-  state.records.push(tempRecord);
-  renderRecords();
+  addPendingRecord(activeConversationId, tempRecord);
+  if (state.currentConversationId === activeConversationId) {
+    state.records = [...state.records, tempRecord];
+    renderRecords();
+  }
 
   try {
     await saveSettings(false);
     const result = await invoke('ask', {
-      conversationId: state.currentConversationId,
+      conversationId: activeConversationId,
       question: draftQuestion,
       useShortTermMemory: state.memoryMode === 'memory',
     });
-    state.records[state.records.length - 1] = result;
-    renderRecords();
+    removePendingRecord(activeConversationId, tempRecord.id);
+    if (state.currentConversationId === activeConversationId) {
+      state.records = state.records.map((record) =>
+        record.id === tempRecord.id ? result : record
+      );
+      renderRecords();
+    }
     setFormMessage('');
     await loadConversations();
     loadKnowledgeStatus().catch(() => {});
   } catch (error) {
-    state.records[state.records.length - 1] = {
+    const failedRecord = {
       ...tempRecord,
       status: 'error',
       errorMessage: String(error),
       answer: '',
     };
-    renderRecords();
+    replacePendingRecord(activeConversationId, tempRecord.id, failedRecord);
+    if (state.currentConversationId === activeConversationId) {
+      state.records = state.records.map((record) =>
+        record.id === tempRecord.id ? failedRecord : record
+      );
+      renderRecords();
+    }
     setFormMessage(String(error), 'error');
   } finally {
-    await loadRecords();
+    if (state.currentConversationId === activeConversationId) {
+      await loadRecords();
+    }
     els.askButton.disabled = false;
     els.saveSettings.disabled = false;
   }
@@ -482,5 +536,10 @@ export function bindChatEvents() {
     });
   });
 
+  els.questionInput.addEventListener('input', () => {
+    resizeQuestionInput();
+  });
+
   els.askForm.addEventListener('submit', askQuestion);
+  resizeQuestionInput();
 }

@@ -64,6 +64,12 @@ pub(crate) fn open_database(app: &AppHandle) -> Result<Connection, String> {
                 mode TEXT NOT NULL DEFAULT 'single',
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS conversation_session_memory (
+                conversation_id INTEGER PRIMARY KEY,
+                memory_json TEXT NOT NULL DEFAULT '{}',
+                updated_at INTEGER NOT NULL
             );",
         )
         .map_err(|error| format!("Failed to initialize database: {error}"))?;

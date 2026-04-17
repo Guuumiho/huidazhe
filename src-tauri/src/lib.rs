@@ -2,7 +2,6 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::PathBuf,
-    time::Duration,
 };
 
 use chrono::Utc;
@@ -17,7 +16,8 @@ mod settings;
 mod storage;
 
 const ASK_MODEL: &str = "gpt-5.4";
-const KNOWLEDGE_MODEL: &str = "gpt-5.4-mini";
+const AUXILIARY_MODEL: &str = "gpt-5.4-mini";
+const KNOWLEDGE_MODEL: &str = AUXILIARY_MODEL;
 const DEFAULT_THEME: &str = "default-theme";
 const SETTINGS_FILE_NAME: &str = "settings.json";
 const DB_FILE_NAME: &str = "qa_records.db";
@@ -25,10 +25,10 @@ const MODEL_CALL_LOG_FILE_NAME: &str = "model_calls.jsonl";
 const KNOWLEDGE_TASK_NAME: &str = "knowledge_map";
 const KNOWLEDGE_CHECK_INTERVAL_MS: i64 = 60 * 60 * 1000;
 const KNOWLEDGE_BATCH_LIMIT: usize = 40;
-const SHORT_TERM_MEMORY_ROUNDS: usize = 2;
-const SHORT_TERM_ASSISTANT_CHAR_LIMIT: usize = 500;
-const ASK_CONCISE_PREFIX: &str = "别讲废话别啰嗦，直指核心回答以下问题：\n";
-
+const SHORT_TERM_MEMORY_ROUNDS: usize = 6;
+const SESSION_MEMORY_RECENT_ROUNDS: usize = 3;
+const SESSION_MEMORY_MAX_TEXT_CHARS: usize = 1200;
+const ASK_SYSTEM_PROMPT: &str = "你是一个高密度、低废话的助手。\n\n请严格遵守以下规则：\n\n1. 先判断用户问题属于：\n- 简单问题：可直接回答\n- 复杂问题：涉及分析、方案、比较、规划\n- 模糊问题：信息不足或目标不清\n\n2. 简单问题：\n- 直接给结论\n- 用最少字数\n- 不做背景解释\n- 不主动延伸\n\n3. 复杂问题：\n- 先给框架，再给每个模块的核心点\n- 框架控制在 3~6 个模块\n- 每个模块只写最关键内容\n- 不一次性展开全部细节\n- 结尾给一个明确下一步\n\n4. 模糊问题：\n- 先问 1~3 个关键澄清问题\n- 或先把问题拆成几个方向让用户选\n- 不在信息不足时长篇作答\n\n5. 表达要求：\n- 短句\n- 列表优先\n- 禁止空话、套话、重复\n- 如果一句话能说清，就不要写一段\n- 回答宁可简短，也不要冗长\n\n6. 默认目标：\n- 帮助用户收敛问题\n- 推动用户逐步提供更具体的信息\n- 只回答当前层级，不抢答后续层级\n\n输出格式规则：\n- 简单问题用：\nxxx\n\n- 复杂问题用：\n【框架】\n1. xxx\n2. xxx\n3. xxx\n\n【核心点】\n- xxx\n- xxx\n- xxx\n\n【下一步】\nxxx\n\n- 模糊问题用：\n【先确认】\n1. xxx？\n2. xxx？";
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
@@ -73,6 +73,19 @@ struct ConversationSummary {
     mode: String,
     created_at: i64,
     updated_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+struct SessionMemory {
+    session_goal: String,
+    confirmed_facts: Vec<String>,
+    constraints: Vec<String>,
+    preferences: Vec<String>,
+    progress: Vec<String>,
+    open_questions: Vec<String>,
+    next_action: String,
+    key_decisions: Vec<String>,
+    risks_or_issues: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -285,11 +298,6 @@ enum ApiKind {
 
 pub fn run() {
     tauri::Builder::default()
-        .setup(|app| {
-            let app_handle = app.handle().clone();
-            std::thread::spawn(move || knowledge_scheduler_loop(app_handle));
-            Ok(())
-        })
         .invoke_handler(tauri::generate_handler![
             settings::load_settings,
             settings::save_settings,
@@ -309,11 +317,4 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("failed to run application");
-}
-
-fn knowledge_scheduler_loop(app: AppHandle) {
-    loop {
-        let _ = tauri::async_runtime::block_on(knowledge::build_knowledge_map_internal(app.clone(), false));
-        std::thread::sleep(Duration::from_millis(KNOWLEDGE_CHECK_INTERVAL_MS as u64));
-    }
 }

@@ -67,6 +67,7 @@ export const state = {
   lastConversationId: null,
   conversationDeleteMode: false,
   records: [],
+  pendingRecordsByConversation: new Map(),
   expandedRawResponseIds: new Set(),
   memoryMode: 'single',
   view: 'chat',

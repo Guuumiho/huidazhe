@@ -122,14 +122,17 @@ textarea {
 
 .conversation-item {
   width: 100%;
-  padding: 12px;
+  height: 60px;
+  padding: 10px 12px;
   border: 1px solid rgba(183, 157, 132, 0.55);
   border-radius: 14px;
   background: rgba(255, 250, 243, 0.76);
   cursor: pointer;
   text-align: left;
   display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
   gap: 8px;
+  overflow: hidden;
 }
 
 .conversation-item.active {
@@ -140,21 +143,30 @@ textarea {
 .conversation-title {
   border: 0;
   background: transparent;
-  padding: 0;
+  padding: 0 8px 0 4px;
   font-weight: 600;
   color: var(--text);
   text-align: left;
   cursor: pointer;
+  line-height: 1.25;
+  min-width: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
 }
 
 .conversation-meta {
   border: 0;
   background: transparent;
-  padding: 0;
+  padding: 0 8px 0 4px;
   color: var(--muted);
   font-size: 11px;
   text-align: left;
   cursor: pointer;
+  min-width: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
 }
 
 .conversation-item-header {
@@ -162,6 +174,7 @@ textarea {
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 
 .conversation-delete {
@@ -522,7 +535,8 @@ h2 {
 .composer textarea {
   resize: none;
   min-height: 56px;
-  max-height: 84px;
+  max-height: 112px;
+  overflow-y: auto;
 }
 
 .primary-button,
@@ -663,6 +677,47 @@ h2 {
   background: rgba(255, 250, 243, 0.72);
   padding: 14px;
   overflow-y: auto;
+}
+
+.knowledge-placeholder {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.knowledge-placeholder-card {
+  width: min(880px, 100%);
+  border: 1px solid rgba(183, 157, 132, 0.4);
+  border-radius: 18px;
+  background: rgba(255, 250, 243, 0.86);
+  padding: 24px 28px;
+  box-shadow: var(--shadow);
+}
+
+.knowledge-placeholder-list {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.knowledge-placeholder-item {
+  border: 1px solid rgba(183, 157, 132, 0.35);
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: rgba(255, 253, 248, 0.92);
+}
+
+.knowledge-placeholder-title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.knowledge-placeholder-desc {
+  margin-top: 6px;
+  color: var(--muted);
+  line-height: 1.6;
 }
 
 .knowledge-detail-title {
