@@ -220,13 +220,18 @@ pub(crate) async fn ask(
 
     let model = ASK_MODEL.to_string();
     let created_at = Utc::now().timestamp_millis();
-    let session_memory = if use_short_term_memory.unwrap_or(false) {
+    let use_memory = use_short_term_memory.unwrap_or(false);
+    let session_memory = if use_memory {
         load_session_memory(&app, conversation_id)?
     } else {
         SessionMemory::default()
     };
-    let system_prompt = build_chat_system_prompt(&session_memory);
-    let short_term_memory = if use_short_term_memory.unwrap_or(false) {
+    let system_prompt = build_chat_system_prompt();
+    let user_prompt = build_chat_user_prompt(
+        &trimmed_question,
+        if use_memory { Some(&session_memory) } else { None },
+    );
+    let short_term_memory = if use_memory {
         fetch_short_term_memory(&app, conversation_id, SHORT_TERM_MEMORY_ROUNDS)?
     } else {
         Vec::new()
@@ -240,7 +245,7 @@ pub(crate) async fn ask(
         &model,
         "chat_answer",
         Some(&system_prompt),
-        &trimmed_question,
+        &user_prompt,
         &short_term_memory,
     )
     .await
@@ -481,13 +486,21 @@ fn build_responses_input(
     sections.join("\n\n")
 }
 
-fn build_chat_system_prompt(session_memory: &SessionMemory) -> String {
-    let session_memory_json =
-        serde_json::to_string(session_memory).unwrap_or_else(|_| "{}".to_string());
-    format!(
-        "[System]\n{}\n\n[Session Memory]\n{}",
-        ASK_SYSTEM_PROMPT, session_memory_json
-    )
+fn build_chat_system_prompt() -> String {
+    ASK_SYSTEM_PROMPT.to_string()
+}
+
+fn build_chat_user_prompt(question: &str, session_memory: Option<&SessionMemory>) -> String {
+    if let Some(session_memory) = session_memory {
+        let session_memory_json =
+            serde_json::to_string(session_memory).unwrap_or_else(|_| "{}".to_string());
+        format!(
+            "[Session Memory]\n{}\n\n[Current Question]\n{}",
+            session_memory_json, question
+        )
+    } else {
+        question.to_string()
+    }
 }
 
 async fn refresh_session_memory(
