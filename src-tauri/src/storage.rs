@@ -19,6 +19,7 @@ pub(crate) fn open_database(app: &AppHandle) -> Result<Connection, String> {
                 created_at INTEGER NOT NULL,
                 model TEXT NOT NULL,
                 api_url TEXT NOT NULL,
+                prompt_mode TEXT NOT NULL DEFAULT 'single',
                 latency_ms INTEGER,
                 status TEXT NOT NULL,
                 error_message TEXT
@@ -79,6 +80,12 @@ pub(crate) fn open_database(app: &AppHandle) -> Result<Connection, String> {
         .ok();
     connection
         .execute_batch("ALTER TABLE qa_records ADD COLUMN conversation_id INTEGER;")
+        .ok();
+    connection
+        .execute_batch("ALTER TABLE qa_records ADD COLUMN prompt_mode TEXT NOT NULL DEFAULT 'single';")
+        .ok();
+    connection
+        .execute("UPDATE qa_records SET prompt_mode = 'single' WHERE prompt_mode IS NULL OR prompt_mode = ''", [])
         .ok();
 
     backfill_default_conversation(&connection)?;

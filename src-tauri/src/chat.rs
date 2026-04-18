@@ -31,16 +31,21 @@ pub(crate) fn list_conversations(app: AppHandle) -> Result<Vec<ConversationSumma
 }
 
 #[tauri::command]
-pub(crate) fn create_conversation(app: AppHandle) -> Result<ConversationSummary, String> {
+pub(crate) fn create_conversation(app: AppHandle, mode: Option<String>) -> Result<ConversationSummary, String> {
     let connection = crate::storage::open_database(&app)?;
     let now = Utc::now().timestamp_millis();
     let title = format!("新对话 {}", chrono::Local::now().format("%m/%d %H:%M"));
+    let normalized_mode = if mode.as_deref() == Some("memory") {
+        "memory"
+    } else {
+        "single"
+    };
 
     connection
         .execute(
             "INSERT INTO conversations (title, mode, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4)",
-            params![title, "single", now, now],
+            params![title, normalized_mode, now, now],
         )
         .map_err(|error| format!("Failed to create conversation: {error}"))?;
 
@@ -60,7 +65,7 @@ pub(crate) fn create_conversation(app: AppHandle) -> Result<ConversationSummary,
         title: connection
             .query_row("SELECT title FROM conversations WHERE id = ?1", [id], |row| row.get(0))
             .map_err(|error| format!("Failed to read new conversation: {error}"))?,
-        mode: "single".to_string(),
+        mode: normalized_mode.to_string(),
         created_at: now,
         updated_at: now,
     })
@@ -221,6 +226,7 @@ pub(crate) async fn ask(
     let model = ASK_MODEL.to_string();
     let created_at = Utc::now().timestamp_millis();
     let use_memory = use_short_term_memory.unwrap_or(false);
+    let prompt_mode = if use_memory { "memory" } else { "single" };
     let session_memory = if use_memory {
         load_session_memory(&app, conversation_id)?
     } else {
@@ -262,6 +268,7 @@ pub(crate) async fn ask(
                 created_at,
                 &model,
                 &normalized_url,
+                prompt_mode,
                 Some(timer.elapsed().as_millis() as i64),
                 "error",
                 Some(&message),
@@ -288,6 +295,7 @@ pub(crate) async fn ask(
         created_at,
         &model,
         &normalized_url,
+        prompt_mode,
         Some(latency_ms),
         "success",
         None,
@@ -301,7 +309,7 @@ pub(crate) async fn ask(
 
     let _ = refresh_conversation_title(&app, &settings, conversation_id, &trimmed_question, &answer).await;
 
-    if use_short_term_memory.unwrap_or(false) {
+    if use_memory {
         let _ = refresh_session_memory(&app, &settings, conversation_id, &trimmed_question, &answer).await;
     }
 
@@ -733,8 +741,9 @@ fn fetch_short_term_memory(app: &AppHandle, conversation_id: i64, rounds: usize)
             "SELECT question, answer
              FROM qa_records
              WHERE status = 'success'
-               AND answer <> ''
-               AND conversation_id = ?1
+                AND answer <> ''
+                AND conversation_id = ?1
+                AND prompt_mode = 'memory'
              ORDER BY created_at DESC, id DESC
              LIMIT ?2",
         )
@@ -888,6 +897,7 @@ fn insert_record(
     created_at: i64,
     model: &str,
     api_url: &str,
+    prompt_mode: &str,
     latency_ms: Option<i64>,
     status: &str,
     error_message: Option<&str>,
@@ -895,8 +905,8 @@ fn insert_record(
     let connection = crate::storage::open_database(app)?;
     connection
         .execute(
-            "INSERT INTO qa_records (conversation_id, question, answer, raw_response, created_at, model, api_url, latency_ms, status, error_message)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO qa_records (conversation_id, question, answer, raw_response, created_at, model, api_url, prompt_mode, latency_ms, status, error_message)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 conversation_id,
                 question,
@@ -905,6 +915,7 @@ fn insert_record(
                 created_at,
                 model,
                 api_url,
+                prompt_mode,
                 latency_ms,
                 status,
                 error_message

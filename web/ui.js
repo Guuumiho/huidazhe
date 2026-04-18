@@ -15,7 +15,6 @@ export const els = {
   saveSettings: document.querySelector('#save-settings'),
   askForm: document.querySelector('#ask-form'),
   askButton: document.querySelector('#ask-button'),
-  memoryModeToggle: document.querySelector('#memory-mode-toggle'),
   questionInput: document.querySelector('#question-input'),
   configStatus: document.querySelector('#config-status'),
   formMessage: document.querySelector('#form-message'),
@@ -33,6 +32,10 @@ export const els = {
   knowledgeMapNodes: document.querySelector('#knowledge-map-nodes'),
   knowledgeDetail: document.querySelector('#knowledge-detail'),
   composer: document.querySelector('#ask-form'),
+  conversationModeModal: document.querySelector('#conversation-mode-modal'),
+  createSingleConversation: document.querySelector('#create-single-conversation'),
+  createMemoryConversation: document.querySelector('#create-memory-conversation'),
+  cancelCreateConversation: document.querySelector('#cancel-create-conversation'),
 };
 
 const QUESTION_INPUT_BASE_HEIGHT = 56;
@@ -109,8 +112,6 @@ export function renderConversationDeleteToggle() {
 
 export function renderMemoryMode() {
   const isMemory = state.memoryMode === 'memory';
-  els.memoryModeToggle.classList.toggle('active', isMemory);
-  els.memoryModeToggle.textContent = isMemory ? '记忆' : '单点';
   els.questionInput.placeholder = isMemory
     ? '输入一个需要参考前文聊天内容的问题...'
     : '输入一个不会污染主工作流上下文的小问题...';
@@ -119,6 +120,14 @@ export function renderMemoryMode() {
 export function setMemoryMode(mode) {
   state.memoryMode = mode === 'memory' ? 'memory' : 'single';
   renderMemoryMode();
+}
+
+export function showConversationModeModal() {
+  els.conversationModeModal?.classList.remove('hidden');
+}
+
+export function hideConversationModeModal() {
+  els.conversationModeModal?.classList.add('hidden');
 }
 
 export function renderView() {

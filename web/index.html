@@ -115,17 +115,35 @@
           </label>
           <div class="composer-actions">
             <div class="composer-meta">
-              <div class="composer-buttons composer-mode-row">
-                <button id="memory-mode-toggle" class="ghost-button" type="button">单点</button>
-              </div>
               <div id="form-message" class="form-message"></div>
             </div>
             <div class="composer-buttons">
-              <button id="ask-button" class="primary-button" type="submit">发送</button>
+              <button id="ask-button" class="primary-button" type="submit" title="Tab+Enter快捷发送">发送</button>
             </div>
           </div>
         </form>
       </section>
+    </div>
+
+    <div id="conversation-mode-modal" class="mode-modal hidden">
+      <div class="mode-modal-backdrop"></div>
+      <div class="mode-modal-card">
+        <p class="eyebrow">New Conversation</p>
+        <h2>选择对话模式</h2>
+        <div class="mode-modal-options">
+          <button id="create-single-conversation" class="mode-option" type="button">
+            <span class="mode-option-title">单点</span>
+            <span class="mode-option-desc">每一个问题毫无上下文关联，适合询问琐碎知识点。</span>
+          </button>
+          <button id="create-memory-conversation" class="mode-option" type="button">
+            <span class="mode-option-title">记忆</span>
+            <span class="mode-option-desc">需要参考前面问答内容，上下有逻辑联系的。</span>
+          </button>
+        </div>
+        <div class="mode-modal-actions">
+          <button id="cancel-create-conversation" class="ghost-button" type="button">取消</button>
+        </div>
+      </div>
     </div>
 
     <script type="module" src="./app.js"></script>

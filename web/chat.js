@@ -4,6 +4,7 @@ import { collectSettings, saveSettings } from './settings.js';
 import {
   els,
   formatTime,
+  hideConversationModeModal,
   invoke,
   renderConversationDeleteToggle,
   resetQuestionInputHeight,
@@ -11,6 +12,7 @@ import {
   setConfigStatus,
   setFormMessage,
   setMemoryMode,
+  showConversationModeModal,
 } from './ui.js';
 
 function getPendingRecords(conversationId) {
@@ -374,8 +376,8 @@ export async function switchConversation(conversationId) {
   await saveSettings(false);
 }
 
-async function createConversation() {
-  const conversation = await invoke('create_conversation');
+async function createConversation(mode) {
+  const conversation = await invoke('create_conversation', { mode });
   state.conversations.unshift(conversation);
   state.currentConversationId = conversation.id;
   state.lastConversationId = conversation.id;
@@ -384,6 +386,7 @@ async function createConversation() {
   renderConversations();
   renderRecords();
   setFormMessage('');
+  hideConversationModeModal();
   await saveSettings(false);
 }
 
@@ -408,24 +411,6 @@ async function removeConversation(conversationId) {
 function toggleConversationDeleteMode() {
   state.conversationDeleteMode = !state.conversationDeleteMode;
   renderConversationDeleteToggle();
-  renderConversations();
-}
-
-async function toggleMemoryMode() {
-  if (!state.currentConversationId) {
-    return;
-  }
-
-  const nextMode = state.memoryMode === 'memory' ? 'single' : 'memory';
-  const updatedConversation = await invoke('update_conversation_mode', {
-    conversationId: state.currentConversationId,
-    mode: nextMode,
-  });
-
-  state.conversations = state.conversations.map((conversation) =>
-    conversation.id === updatedConversation.id ? updatedConversation : conversation
-  );
-  setMemoryMode(updatedConversation.mode);
   renderConversations();
 }
 
@@ -521,19 +506,27 @@ export async function askQuestion(event) {
 
 export function bindChatEvents() {
   els.createConversation.addEventListener('click', () => {
-    createConversation().catch((error) => {
-      setFormMessage(String(error), 'error');
-    });
+    showConversationModeModal();
   });
 
   els.toggleConversationDelete?.addEventListener('click', () => {
     toggleConversationDeleteMode();
   });
 
-  els.memoryModeToggle.addEventListener('click', () => {
-    toggleMemoryMode().catch((error) => {
+  els.createSingleConversation?.addEventListener('click', () => {
+    createConversation('single').catch((error) => {
       setFormMessage(String(error), 'error');
     });
+  });
+
+  els.createMemoryConversation?.addEventListener('click', () => {
+    createConversation('memory').catch((error) => {
+      setFormMessage(String(error), 'error');
+    });
+  });
+
+  els.cancelCreateConversation?.addEventListener('click', () => {
+    hideConversationModeModal();
   });
 
   els.questionInput.addEventListener('input', () => {
