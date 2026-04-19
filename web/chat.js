@@ -302,7 +302,7 @@ export function renderRecords() {
     if (record.latencyMs !== null && record.latencyMs !== undefined) {
       parts.push(`${record.latencyMs} ms`);
     }
-    meta.textContent = parts.filter(Boolean).join(' 路 ');
+    meta.textContent = parts.filter(Boolean).join(' ');
     assistantPart.bubble.appendChild(meta);
 
     const rawSection = createRawResponseSection(record);
