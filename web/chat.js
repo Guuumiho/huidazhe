@@ -6,6 +6,7 @@ import {
   formatTime,
   hideConversationModeModal,
   invoke,
+  relationLabel,
   renderConversationDeleteToggle,
   resetQuestionInputHeight,
   resizeQuestionInput,
@@ -213,6 +214,23 @@ function createBubble(roleLabel, text, variant = 'assistant') {
   return { row, bubble };
 }
 
+function createRetryButton(record) {
+  if (!record.retryAvailable) {
+    return null;
+  }
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'retry-button';
+  button.textContent = '重新发送';
+  button.addEventListener('click', () => {
+    retryQuestion(record).catch((error) => {
+      setFormMessage(String(error), 'error');
+    });
+  });
+  return button;
+}
+
 function createRawResponseSection(record) {
   if (!record.rawResponse) {
     return null;
@@ -251,17 +269,29 @@ export function renderRecords() {
 
   state.records.forEach((record) => {
     const userPart = createBubble('User', record.question, 'user');
+    const retryButton = createRetryButton(record);
+    if (retryButton) {
+      userPart.bubble.appendChild(retryButton);
+    }
     els.chatList.appendChild(userPart.row);
 
-    const assistantText = record.status === 'error'
+    const isError = record.status === 'error' || record.status === 'unavailable';
+    const assistantText = isError
       ? (record.errorMessage || '请求失败')
       : (record.answer || 'Thinking...');
 
     const assistantPart = createBubble(
       'Assistant',
       assistantText,
-      record.status === 'error' ? 'error' : 'assistant'
+      isError ? 'error' : 'assistant'
     );
+
+    if (record.fallbackNotice) {
+      const notice = document.createElement('div');
+      notice.className = 'chat-fallback-notice';
+      notice.textContent = record.fallbackNotice;
+      assistantPart.bubble.prepend(notice);
+    }
 
     const meta = document.createElement('div');
     meta.className = 'chat-record-meta';
@@ -272,7 +302,7 @@ export function renderRecords() {
     if (record.latencyMs !== null && record.latencyMs !== undefined) {
       parts.push(`${record.latencyMs} ms`);
     }
-    meta.textContent = parts.filter(Boolean).join(' · ');
+    meta.textContent = parts.filter(Boolean).join(' 路 ');
     assistantPart.bubble.appendChild(meta);
 
     const rawSection = createRawResponseSection(record);
@@ -327,7 +357,7 @@ export function renderConversations() {
     meta.type = 'button';
     meta.className = 'conversation-meta';
     const modeLabel = conversation.mode === 'memory' ? '记忆' : '单点';
-    meta.textContent = `${modeLabel} · ${formatTime(conversation.updatedAt)}`;
+    meta.textContent = `${modeLabel} ${formatTime(conversation.updatedAt)}`;
     meta.addEventListener('click', async () => {
       await switchConversation(conversation.id);
     });
@@ -340,14 +370,22 @@ export function renderConversations() {
 export async function loadConversations() {
   state.conversations = await invoke('list_conversations');
   const preferredConversationId = state.currentConversationId ?? state.lastConversationId;
-  if (preferredConversationId && state.conversations.some((item) => item.id === preferredConversationId)) {
+  if (
+    preferredConversationId &&
+    state.conversations.some((item) => item.id === preferredConversationId)
+  ) {
     state.currentConversationId = preferredConversationId;
-  } else if (!state.currentConversationId || !state.conversations.some((item) => item.id === state.currentConversationId)) {
+  } else if (
+    !state.currentConversationId ||
+    !state.conversations.some((item) => item.id === state.currentConversationId)
+  ) {
     state.currentConversationId = state.conversations[0]?.id ?? null;
   }
   state.lastConversationId = state.currentConversationId;
 
-  const currentConversation = state.conversations.find((item) => item.id === state.currentConversationId);
+  const currentConversation = state.conversations.find(
+    (item) => item.id === state.currentConversationId
+  );
   setMemoryMode(currentConversation?.mode || 'single');
   renderConversations();
 }
@@ -391,9 +429,7 @@ async function createConversation(mode) {
 }
 
 async function removeConversation(conversationId) {
-  const nextConversations = await invoke('delete_conversation', {
-    conversationId,
-  });
+  const nextConversations = await invoke('delete_conversation', { conversationId });
 
   state.conversations = nextConversations;
   if (state.currentConversationId === conversationId) {
@@ -401,7 +437,9 @@ async function removeConversation(conversationId) {
   }
   state.lastConversationId = state.currentConversationId;
 
-  const currentConversation = state.conversations.find((item) => item.id === state.currentConversationId);
+  const currentConversation = state.conversations.find(
+    (item) => item.id === state.currentConversationId
+  );
   setMemoryMode(currentConversation?.mode || 'single');
   renderConversations();
   await loadRecords();
@@ -414,12 +452,63 @@ function toggleConversationDeleteMode() {
   renderConversations();
 }
 
+function buildPendingRecord(question, conversationId) {
+  return {
+    id: `pending-${Date.now()}`,
+    conversationId,
+    question,
+    answer: 'Thinking...',
+    rawResponse: null,
+    fallbackNotice: null,
+    createdAt: Date.now(),
+    model: 'gpt-5.4',
+    latencyMs: null,
+    status: 'success',
+    errorMessage: null,
+    retryAvailable: false,
+  };
+}
+
+function renderPendingRecord(conversationId, record) {
+  addPendingRecord(conversationId, record);
+  if (state.currentConversationId === conversationId) {
+    state.records = [...state.records, record];
+    renderRecords();
+  }
+}
+
+function replaceRenderedPendingRecord(conversationId, tempRecordId, nextRecord) {
+  replacePendingRecord(conversationId, tempRecordId, nextRecord);
+  if (state.currentConversationId === conversationId) {
+    state.records = state.records.map((record) =>
+      record.id === tempRecordId ? nextRecord : record
+    );
+    renderRecords();
+  }
+}
+
+function removeRenderedPendingRecord(conversationId, tempRecordId) {
+  removePendingRecord(conversationId, tempRecordId);
+  if (state.currentConversationId === conversationId) {
+    state.records = state.records.filter((record) => record.id !== tempRecordId);
+    renderRecords();
+  }
+}
+
 export async function askQuestion(event) {
   event.preventDefault();
-  setFormMessage('');
-
   const draftQuestion = els.questionInput.value.trim();
   const activeConversationId = state.currentConversationId;
+  await submitQuestion(draftQuestion, activeConversationId);
+}
+
+async function retryQuestion(record) {
+  removeRenderedPendingRecord(record.conversationId, record.id);
+  await submitQuestion(record.question, record.conversationId);
+}
+
+async function submitQuestion(draftQuestion, activeConversationId) {
+  setFormMessage('');
   const settings = collectSettings();
 
   if (!activeConversationId) {
@@ -444,24 +533,8 @@ export async function askQuestion(event) {
   els.questionInput.value = '';
   resetQuestionInputHeight();
 
-  const tempRecord = {
-    id: `pending-${Date.now()}`,
-    conversationId: activeConversationId,
-    question: draftQuestion,
-    answer: 'Thinking...',
-    rawResponse: null,
-    createdAt: Date.now(),
-    model: 'gpt-5.4',
-    latencyMs: null,
-    status: 'success',
-    errorMessage: null,
-  };
-
-  addPendingRecord(activeConversationId, tempRecord);
-  if (state.currentConversationId === activeConversationId) {
-    state.records = [...state.records, tempRecord];
-    renderRecords();
-  }
+  const tempRecord = buildPendingRecord(draftQuestion, activeConversationId);
+  renderPendingRecord(activeConversationId, tempRecord);
 
   try {
     await saveSettings(false);
@@ -470,30 +543,29 @@ export async function askQuestion(event) {
       question: draftQuestion,
       useShortTermMemory: state.memoryMode === 'memory',
     });
-    removePendingRecord(activeConversationId, tempRecord.id);
-    if (state.currentConversationId === activeConversationId) {
-      state.records = state.records.map((record) =>
-        record.id === tempRecord.id ? result : record
-      );
-      renderRecords();
+
+    if (result.ok && result.record) {
+      removePendingRecord(activeConversationId, tempRecord.id);
+      if (state.currentConversationId === activeConversationId) {
+        await loadRecords();
+      }
+      setFormMessage('');
+      await loadConversations();
+      loadKnowledgeStatus().catch(() => {});
+      return;
     }
-    setFormMessage('');
-    await loadConversations();
-    loadKnowledgeStatus().catch(() => {});
-  } catch (error) {
+
     const failedRecord = {
       ...tempRecord,
-      status: 'error',
-      errorMessage: String(error),
       answer: '',
+      status: 'unavailable',
+      errorMessage: result.failureMessage || '大模型api暂不可用，稍后重试',
+      retryAvailable: !!result.retryAvailable,
     };
-    replacePendingRecord(activeConversationId, tempRecord.id, failedRecord);
-    if (state.currentConversationId === activeConversationId) {
-      state.records = state.records.map((record) =>
-        record.id === tempRecord.id ? failedRecord : record
-      );
-      renderRecords();
-    }
+    replaceRenderedPendingRecord(activeConversationId, tempRecord.id, failedRecord);
+    setFormMessage(result.failureMessage || '大模型api暂不可用，稍后重试', 'error');
+  } catch (error) {
+    removeRenderedPendingRecord(activeConversationId, tempRecord.id);
     setFormMessage(String(error), 'error');
   } finally {
     if (state.currentConversationId === activeConversationId) {

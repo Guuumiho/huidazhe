@@ -467,6 +467,27 @@ h2 {
   font-size: 11px;
 }
 
+.chat-fallback-notice {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.retry-button {
+  margin-top: 10px;
+  border: 1px solid rgba(142, 95, 74, 0.35);
+  border-radius: 999px;
+  background: rgba(255, 250, 243, 0.92);
+  color: var(--accent);
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.retry-button:hover {
+  background: rgba(255, 244, 237, 0.96);
+}
+
 .form-message.error {
   color: var(--error-text);
 }

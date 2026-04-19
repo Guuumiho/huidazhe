@@ -66,12 +66,22 @@ struct HistoryRecord {
     question: String,
     answer: String,
     raw_response: Option<String>,
+    fallback_notice: Option<String>,
     created_at: i64,
     model: String,
     api_url: String,
     latency_ms: Option<i64>,
     status: String,
     error_message: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct AskResponse {
+    ok: bool,
+    record: Option<HistoryRecord>,
+    failure_message: Option<String>,
+    retry_available: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

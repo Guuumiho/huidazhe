@@ -16,6 +16,7 @@ pub(crate) fn open_database(app: &AppHandle) -> Result<Connection, String> {
                 question TEXT NOT NULL,
                 answer TEXT NOT NULL,
                 raw_response TEXT,
+                fallback_notice TEXT,
                 created_at INTEGER NOT NULL,
                 model TEXT NOT NULL,
                 api_url TEXT NOT NULL,
@@ -80,6 +81,9 @@ pub(crate) fn open_database(app: &AppHandle) -> Result<Connection, String> {
         .ok();
     connection
         .execute_batch("ALTER TABLE qa_records ADD COLUMN conversation_id INTEGER;")
+        .ok();
+    connection
+        .execute_batch("ALTER TABLE qa_records ADD COLUMN fallback_notice TEXT;")
         .ok();
     connection
         .execute_batch("ALTER TABLE qa_records ADD COLUMN prompt_mode TEXT NOT NULL DEFAULT 'single';")

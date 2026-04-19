@@ -177,7 +177,7 @@ pub(crate) fn get_history_item(app: AppHandle, id: i64) -> Result<HistoryRecord,
     let connection = crate::storage::open_database(&app)?;
     connection
         .query_row(
-            "SELECT id, conversation_id, question, answer, raw_response, created_at, model, api_url, latency_ms, status, error_message
+            "SELECT id, conversation_id, question, answer, raw_response, fallback_notice, created_at, model, api_url, latency_ms, status, error_message
              FROM qa_records
              WHERE id = ?1",
             [id],
@@ -191,7 +191,7 @@ pub(crate) fn list_history_records(app: AppHandle, conversation_id: i64) -> Resu
     let connection = crate::storage::open_database(&app)?;
     let mut statement = connection
         .prepare(
-            "SELECT id, conversation_id, question, answer, raw_response, created_at, model, api_url, latency_ms, status, error_message
+            "SELECT id, conversation_id, question, answer, raw_response, fallback_notice, created_at, model, api_url, latency_ms, status, error_message
              FROM qa_records
              WHERE conversation_id = ?1
              ORDER BY created_at ASC, id ASC",
@@ -212,7 +212,7 @@ pub(crate) async fn ask(
     conversation_id: i64,
     question: String,
     use_short_term_memory: Option<bool>,
-) -> Result<HistoryRecord, String> {
+) -> Result<AskResponse, String> {
     let trimmed_question = question.trim().to_string();
     if trimmed_question.is_empty() {
         return Err("Question cannot be empty.".to_string());
@@ -245,46 +245,60 @@ pub(crate) async fn ask(
 
     let timer = Instant::now();
     let (normalized_url, _) = normalize_api_url(&settings.api_url);
-    let raw_body = match send_model_text_request(
+    let primary_attempt = execute_chat_attempt(
         &app,
         &settings,
         &model,
-        "chat_answer",
-        Some(&system_prompt),
+        &system_prompt,
         &user_prompt,
         &short_term_memory,
     )
-    .await
-    {
-        Ok(raw_body) => raw_body,
-        Err(error) => {
-            let message = format!("Request failed: {error}");
-            insert_record(
+    .await;
+
+    let (final_model, raw_body, answer, fallback_notice) = match primary_attempt {
+        Ok(result) => (model.clone(), result.raw_body, result.answer, None),
+        Err(_) => {
+            match execute_chat_attempt(
                 &app,
-                conversation_id,
-                &trimmed_question,
-                "",
-                None,
-                created_at,
+                &settings,
                 &model,
-                &normalized_url,
-                prompt_mode,
-                Some(timer.elapsed().as_millis() as i64),
-                "error",
-                Some(&message),
-            )?;
-            update_conversation_after_message(
-                &crate::storage::open_database(&app)?,
-                conversation_id,
-                created_at,
-            )?;
-            return Err(message);
+                &system_prompt,
+                &user_prompt,
+                &short_term_memory,
+            )
+            .await
+            {
+                Ok(result) => (model.clone(), result.raw_body, result.answer, None),
+                Err(_) => match execute_chat_attempt(
+                    &app,
+                    &settings,
+                    AUXILIARY_MODEL,
+                    &system_prompt,
+                    &user_prompt,
+                    &short_term_memory,
+                )
+                .await
+                {
+                    Ok(result) => (
+                        AUXILIARY_MODEL.to_string(),
+                        result.raw_body,
+                        result.answer,
+                        Some("gpt-5.4请求失败，此问题切换成gpt-5.4-mini".to_string()),
+                    ),
+                    Err(_) => {
+                        return Ok(AskResponse {
+                            ok: false,
+                            record: None,
+                            failure_message: Some("大模型api暂不可用，稍后重试".to_string()),
+                            retry_available: true,
+                        });
+                    }
+                },
+            }
         }
     };
 
     let latency_ms = timer.elapsed().as_millis() as i64;
-    let answer = parse_model_text(&settings.api_url, &raw_body)
-        .map_err(|error| format!("Failed to parse model response: {error}"))?;
 
     let record_id = insert_record(
         &app,
@@ -292,8 +306,9 @@ pub(crate) async fn ask(
         &trimmed_question,
         &answer,
         Some(&raw_body),
+        fallback_notice.as_deref(),
         created_at,
-        &model,
+        &final_model,
         &normalized_url,
         prompt_mode,
         Some(latency_ms),
@@ -313,18 +328,24 @@ pub(crate) async fn ask(
         let _ = refresh_session_memory(&app, &settings, conversation_id, &trimmed_question, &answer).await;
     }
 
-    Ok(HistoryRecord {
-        id: record_id,
-        conversation_id,
-        question: trimmed_question,
-        answer,
-        raw_response: Some(raw_body),
-        created_at,
-        model,
-        api_url: normalized_url,
-        latency_ms: Some(latency_ms),
-        status: "success".to_string(),
-        error_message: None,
+    Ok(AskResponse {
+        ok: true,
+        record: Some(HistoryRecord {
+            id: record_id,
+            conversation_id,
+            question: trimmed_question,
+            answer,
+            raw_response: Some(raw_body),
+            fallback_notice,
+            created_at,
+            model: final_model,
+            api_url: normalized_url,
+            latency_ms: Some(latency_ms),
+            status: "success".to_string(),
+            error_message: None,
+        }),
+        failure_message: None,
+        retry_available: false,
     })
 }
 
@@ -465,6 +486,36 @@ pub(crate) async fn send_model_text_request(
     }
 
     Ok(raw_body)
+}
+
+struct ChatAttemptResult {
+    raw_body: String,
+    answer: String,
+}
+
+async fn execute_chat_attempt(
+    app: &AppHandle,
+    settings: &Settings,
+    model: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+    short_term_memory: &[MemoryMessage],
+) -> Result<ChatAttemptResult, String> {
+    let raw_body = send_model_text_request(
+        app,
+        settings,
+        model,
+        "chat_answer",
+        Some(system_prompt),
+        user_prompt,
+        short_term_memory,
+    )
+    .await?;
+
+    let answer = parse_model_text(&settings.api_url, &raw_body)
+        .map_err(|error| format!("Failed to parse model response: {error}"))?;
+
+    Ok(ChatAttemptResult { raw_body, answer })
 }
 
 fn build_responses_input(
@@ -894,6 +945,7 @@ fn insert_record(
     question: &str,
     answer: &str,
     raw_response: Option<&str>,
+    fallback_notice: Option<&str>,
     created_at: i64,
     model: &str,
     api_url: &str,
@@ -905,13 +957,14 @@ fn insert_record(
     let connection = crate::storage::open_database(app)?;
     connection
         .execute(
-            "INSERT INTO qa_records (conversation_id, question, answer, raw_response, created_at, model, api_url, prompt_mode, latency_ms, status, error_message)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO qa_records (conversation_id, question, answer, raw_response, fallback_notice, created_at, model, api_url, prompt_mode, latency_ms, status, error_message)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 conversation_id,
                 question,
                 answer,
                 raw_response,
+                fallback_notice,
                 created_at,
                 model,
                 api_url,
@@ -933,12 +986,13 @@ fn map_history_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryRecord
         question: row.get(2)?,
         answer: row.get(3)?,
         raw_response: row.get(4)?,
-        created_at: row.get(5)?,
-        model: row.get(6)?,
-        api_url: row.get(7)?,
-        latency_ms: row.get(8)?,
-        status: row.get(9)?,
-        error_message: row.get(10)?,
+        fallback_notice: row.get(5)?,
+        created_at: row.get(6)?,
+        model: row.get(7)?,
+        api_url: row.get(8)?,
+        latency_ms: row.get(9)?,
+        status: row.get(10)?,
+        error_message: row.get(11)?,
     })
 }
 
