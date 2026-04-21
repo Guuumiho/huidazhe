@@ -99,6 +99,27 @@ pub(crate) fn delete_conversation(app: AppHandle, conversation_id: i64) -> Resul
         )
         .map_err(|error| format!("Failed to delete conversation memory: {error}"))?;
 
+    connection
+        .execute(
+            "DELETE FROM conversation_map_edges WHERE conversation_id = ?1",
+            [conversation_id],
+        )
+        .map_err(|error| format!("Failed to delete conversation map edges: {error}"))?;
+
+    connection
+        .execute(
+            "DELETE FROM conversation_map_nodes WHERE conversation_id = ?1",
+            [conversation_id],
+        )
+        .map_err(|error| format!("Failed to delete conversation map nodes: {error}"))?;
+
+    connection
+        .execute(
+            "DELETE FROM conversation_map_events WHERE conversation_id = ?1",
+            [conversation_id],
+        )
+        .map_err(|error| format!("Failed to delete conversation map events: {error}"))?;
+
     let mut statement = connection
         .prepare(
             "SELECT id, title, mode, created_at, updated_at
@@ -327,6 +348,11 @@ pub(crate) async fn ask(
     if use_memory {
         let _ = refresh_session_memory(&app, &settings, conversation_id, &trimmed_question, &answer).await;
     }
+
+    let map_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = crate::knowledge::refresh_conversation_map_internal(map_app, conversation_id, record_id).await;
+    });
 
     Ok(AskResponse {
         ok: true,
@@ -668,7 +694,7 @@ async fn refresh_conversation_title(
     Ok(())
 }
 
-fn parse_model_text(api_url: &str, raw_body: &str) -> Result<String, String> {
+pub(crate) fn parse_model_text(api_url: &str, raw_body: &str) -> Result<String, String> {
     match normalize_api_url(api_url).1 {
         ApiKind::ChatCompletions => parse_chat_completion_text(raw_body),
         ApiKind::Responses => parse_responses_text(raw_body),

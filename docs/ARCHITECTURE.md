@@ -2,80 +2,78 @@
 
 ## 系统目标
 
-这个项目的目标是做一个本地、轻量、适合个人开发者使用的桌面问答系统，并在问答之上逐步扩展两条能力：
+这是一个本地、轻量、自用导向的桌面问答工具。
 
-- 带短期上下文的记忆问答
-- 自动整理的知识地图
+当前系统围绕三条主线演进：
+- 单点问答
+- 记忆问答
+- 思维地图
 
-系统强调：
-
+系统设计优先级：
 - 本地运行
 - 低资源占用
-- 问答与知识整理解耦
-- 便于后续继续演进
+- 多对话窗口隔离
+- 数据默认保留在本机
+- 便于持续迭代
 
 ## 主要模块
 
-前端模块：
+### 前端
 
 - [web/app.js](/D:/Learning/agent/vibecoding/codex/question/web/app.js)
   前端启动入口
 - [web/state.js](/D:/Learning/agent/vibecoding/codex/question/web/state.js)
-  共享状态
+  前端共享状态
 - [web/ui.js](/D:/Learning/agent/vibecoding/codex/question/web/ui.js)
-  通用 UI 行为
+  通用 UI 行为和 DOM 工具
 - [web/settings.js](/D:/Learning/agent/vibecoding/codex/question/web/settings.js)
   设置区逻辑
 - [web/chat.js](/D:/Learning/agent/vibecoding/codex/question/web/chat.js)
-  多对话窗口、单点问答、记忆问答
+  多对话窗口、单点问答、记忆问答、失败重发
 - [web/knowledge.js](/D:/Learning/agent/vibecoding/codex/question/web/knowledge.js)
-  知识地图逻辑
+  旧知识地图冻结页
+- [web/thought-map.js](/D:/Learning/agent/vibecoding/codex/question/web/thought-map.js)
+  当前窗口右侧思维地图侧栏
 
-后端模块：
+### 后端
 
 - [src-tauri/src/lib.rs](/D:/Learning/agent/vibecoding/codex/question/src-tauri/src/lib.rs)
-  后端入口、模块声明、命令注册、后台调度入口
+  常量、结构体、模块注册、Tauri 命令汇总
 - [src-tauri/src/settings.rs](/D:/Learning/agent/vibecoding/codex/question/src-tauri/src/settings.rs)
   设置读写
 - [src-tauri/src/chat.rs](/D:/Learning/agent/vibecoding/codex/question/src-tauri/src/chat.rs)
-  问答主流程、多对话窗口、短期记忆、模型请求
+  问答主流程、多对话窗口、短期记忆、中期记忆、失败兜底
 - [src-tauri/src/knowledge.rs](/D:/Learning/agent/vibecoding/codex/question/src-tauri/src/knowledge.rs)
-  知识整理、节点、边、状态
+  旧知识地图接口 + conversation map 增量更新逻辑
 - [src-tauri/src/storage.rs](/D:/Learning/agent/vibecoding/codex/question/src-tauri/src/storage.rs)
-  SQLite、路径、日志落盘
-
-数据与配置：
-
-- `settings.json`
-- `qa_records.db`
-- `model_calls.jsonl`
+  SQLite、路径、日志文件
 
 ## 模块之间依赖关系
 
 ```text
 前端
 ├─ app.js
-│  ├─ settings.js
-│  ├─ chat.js
-│  ├─ knowledge.js
-│  └─ ui.js / state.js
-└─ 各模块通过 Tauri invoke 调后端命令
+├─ settings.js
+├─ chat.js
+├─ thought-map.js
+├─ knowledge.js
+└─ ui.js / state.js
+   └─ 通过 Tauri invoke 调后端命令
 
 后端
 ├─ lib.rs
-│  ├─ settings.rs
-│  ├─ chat.rs
-│  ├─ knowledge.rs
-│  └─ storage.rs
-└─ chat.rs / knowledge.rs 依赖 storage.rs
+├─ settings.rs
+├─ chat.rs
+├─ knowledge.rs
+└─ storage.rs
+   └─ chat.rs / knowledge.rs 依赖 storage.rs
 ```
 
-关系原则：
-
-- `settings.js` / `settings.rs` 只管设置
-- `chat.js` / `chat.rs` 只管问答主流程
-- `knowledge.js` / `knowledge.rs` 只管知识地图
-- `storage.rs` 是底层支持层，不反向依赖业务模块
+原则：
+- 设置、问答、思维地图按功能域拆开
+- `chat.rs` 管问答
+- `knowledge.rs` 既保留旧知识地图接口，也负责新的 conversation map
+- `storage.rs` 只做底层数据支持
 
 ## 数据流 / 请求流
 
@@ -84,134 +82,178 @@
 ```text
 问题区输入
 → web/chat.js
-→ invoke('ask')
+→ invoke("ask")
 → src-tauri/src/chat.rs
-→ 模型接口
-→ 写入 qa_records
+→ gpt-5.4
+→ 成功后写入 qa_records
+→ 异步触发 refresh_conversation_map_internal
 → 返回前端渲染
 ```
+
+单点模式特点：
+- 不带短期记忆
+- 不更新中期记忆
+- 仍然会更新当前窗口的思维地图
 
 ### 2. 记忆问答
 
 ```text
 问题区输入
-→ web/chat.js 传 useShortTermMemory
+→ web/chat.js
+→ invoke("ask", useShortTermMemory=true)
 → src-tauri/src/chat.rs
-→ 读取当前对话窗口最近几轮问答
-→ 组装短期上下文后请求模型
-→ 写入 qa_records
+→ 读取当前 conversation 的中期记忆
+→ 读取当前 conversation 下最近 6 轮、且 prompt_mode=memory 的历史问答
+→ 发送给 gpt-5.4
+→ 成功后写入 qa_records
+→ 更新 conversation_session_memory
+→ 异步触发 refresh_conversation_map_internal
 → 返回前端渲染
 ```
 
-### 3. 多对话窗口
+记忆模式特点：
+- 短期记忆只取当前窗口、记忆模式下的历史
+- 中期记忆按窗口单独保存
+
+### 3. 思维地图
 
 ```text
+问答成功
+→ chat.rs 异步触发 refresh_conversation_map_internal
+→ knowledge.rs 读取当前窗口已有节点和边
+→ gpt-5.4-mini 返回本轮增量 JSON
+→ 写入 conversation_map_nodes / edges / events
+→ 前端 thought-map.js 拉取当前窗口图并渲染右侧圆形节点
+```
+
+思维地图特点：
+- 每个 conversation 独立维护
+- 不跨窗口共享
+- 用户节点为实心
+- 助手节点更透明
+- 每轮最多新增 3 个助手节点
+
+### 4. 失败兜底链路
+
+```text
+gpt-5.4 第一次失败
+→ 自动重试一次 gpt-5.4
+→ 再失败则切到 gpt-5.4-mini
+→ 若 mini 成功，记录 fallback_notice
+→ 若 mini 也失败，不写数据库，只在前端显示本地失败消息和“重新发送”
+```
+
+### 5. 多对话窗口
+
+```text
+左边栏创建窗口
+→ create_conversation(mode)
+→ conversations 表新增一条记录
+→ 对应 conversation_session_memory 初始化空记录
+
 左边栏切换窗口
-→ web/chat.js 更新 currentConversationId
-→ invoke('list_history_records')
-→ src-tauri/src/chat.rs
-→ 按 conversation_id 读取 qa_records
-→ 前端重绘消息区
-```
-
-### 4. 知识地图
-
-```text
-问答成功写入 qa_records
-→ 后台小时级检查
-→ src-tauri/src/knowledge.rs 整理未处理问答
-→ 写入 knowledge_nodes / knowledge_edges / knowledge_sources
-→ web/knowledge.js 读取并展示
-```
-
-### 5. 设置加载
-
-```text
-应用启动
-→ web/settings.js
-→ invoke('load_settings')
-→ src-tauri/src/settings.rs
-→ settings.json
-→ 前端应用到设置区和主题
+→ currentConversationId 改变
+→ list_history_records(conversation_id)
+→ get_conversation_map(conversation_id)
+→ 只加载该窗口自己的问答和思维地图
 ```
 
 ## 核心文件位置
 
-最重要的入口文件：
-
-- [web/app.js](/D:/Learning/agent/vibecoding/codex/question/web/app.js)
-- [src-tauri/src/lib.rs](/D:/Learning/agent/vibecoding/codex/question/src-tauri/src/lib.rs)
-
-问答核心：
-
+问答主链路：
 - [web/chat.js](/D:/Learning/agent/vibecoding/codex/question/web/chat.js)
 - [src-tauri/src/chat.rs](/D:/Learning/agent/vibecoding/codex/question/src-tauri/src/chat.rs)
 
-知识地图核心：
-
-- [web/knowledge.js](/D:/Learning/agent/vibecoding/codex/question/web/knowledge.js)
+思维地图：
+- [web/thought-map.js](/D:/Learning/agent/vibecoding/codex/question/web/thought-map.js)
 - [src-tauri/src/knowledge.rs](/D:/Learning/agent/vibecoding/codex/question/src-tauri/src/knowledge.rs)
 
-存储与配置：
-
+设置与本地配置：
+- [web/settings.js](/D:/Learning/agent/vibecoding/codex/question/web/settings.js)
 - [src-tauri/src/settings.rs](/D:/Learning/agent/vibecoding/codex/question/src-tauri/src/settings.rs)
+
+数据层：
 - [src-tauri/src/storage.rs](/D:/Learning/agent/vibecoding/codex/question/src-tauri/src/storage.rs)
 
 ## 关键抽象与设计决策
 
-### 1. 单点问答与记忆问答共用主流程
+### 1. 单点问答和记忆问答共用 ask 主链路
 
-不是复制两套完整问答系统，而是共用问答主链路，只在“是否带短期记忆”这个策略上分叉。
+不是复制两套系统，而是：
+- 共用一个 `ask`
+- 由 `useShortTermMemory` 和 conversation mode 决定是否带记忆
 
-### 2. 多对话窗口作为一级数据实体
+### 2. conversation 是一等实体
 
-对话窗口不是纯前端概念，后端有 `conversations` 表，`qa_records` 用 `conversation_id` 归属到具体窗口。这样模式、标题、历史范围都能自然跟窗口绑定。
+每个对话窗口有自己的：
+- title
+- mode
+- updated_at
+- session memory
+- qa_records 范围
+- conversation map
 
-### 3. 默认简洁回复在后端统一处理
+所以窗口之间是逻辑隔离的，不是前端假切换。
 
-简洁提示词不再由前端按钮控制，而是在 Rust 后端统一拼接，保证不同窗口和不同模式下的行为一致。
+### 3. 非主问答模型统一走 mini
 
-### 4. 知识地图与问答主流程解耦
+当前约定：
+- 当前问答窗口点击发送：`gpt-5.4`
+- 其他辅助调用：`gpt-5.4-mini`
 
-知识整理不阻塞问答发送。问答先写原始记录，知识整理在后台批量进行。
+辅助调用包括：
+- 会话标题生成
+- 中期记忆更新
+- 思维地图增量更新
 
-### 5. 本地优先
+### 4. 思维地图只做增量更新，不做全图重算
 
-设置、问答历史、知识节点、模型请求日志都保存在本地，不依赖外部数据库服务。
+每轮只处理：
+- 本轮用户问题命中哪个节点
+- 是否要把助手节点转正
+- 新增哪些助手节点
+- 节点怎么连线
+
+这样可以降低 token 和布局抖动。
 
 ## 已完成到什么程度
 
-已经完成：
-
-- 本地设置区
-- 多对话窗口与窗口切换
+已完成：
+- 设置区与本地配置
+- 多对话窗口
 - 单点问答
 - 记忆问答第一版
-- 默认简洁回复
-- 历史消息展示
+- 短期记忆按窗口隔离
+- 中期记忆按窗口保存
+- 思维地图 V1：右侧侧栏、conversation map 数据层、异步增量更新
 - 模型调用日志落盘
-- 知识地图第一版
-- 后台按小时检查知识整理
-- 前后端第一阶段按功能域拆分
+- 一键打包脚本 `build-exe.cmd`
+- 前后端第一阶段模块拆分
+- 旧知识地图冻结页
+- 失败自动重试 / mini 降级 / 前端重发按钮
 
-## 半成品 / 待重构 / 已知坑
+## 哪些地方是半成品 / 待重构 / 已知坑
 
-半成品：
+### 半成品
 
-- 记忆问答目前只有短期记忆，没有长期检索
-- 知识地图还是第一版，关系抽取与节点归并仍偏粗糙
+- 思维地图 V1 已可用，但布局和抽取质量仍然是第一版
+- 旧知识地图独立页面仍保留占位逻辑，后续可能删掉或并入思维地图
 
-待重构：
+### 待重构
 
-- `chat.rs` 仍然偏大，后续可以再拆成模型客户端、上下文策略、历史查询
-- `knowledge.rs` 仍然承担较多整理逻辑，后续可拆成聚类、抽取、持久化子模块
+- [src-tauri/src/chat.rs](/D:/Learning/agent/vibecoding/codex/question/src-tauri/src/chat.rs) 仍然偏大，后续可以再拆成：
+  - 模型客户端
+  - 记忆策略
+  - 记录写入
+  - 失败兜底
+- [src-tauri/src/knowledge.rs](/D:/Learning/agent/vibecoding/codex/question/src-tauri/src/knowledge.rs) 同时承载旧知识地图和新思维地图，后续适合继续拆开
+- [web/chat.js](/D:/Learning/agent/vibecoding/codex/question/web/chat.js) 仍然是前端最复杂文件
 
-已知问题：
+### 已知坑
 
-- 左边栏切换窗口的交互刚做过修复，需要继续观察是否还有偶发切换不稳定
-- 问题区布局此前有过被挤出视口的问题，样式层仍需继续稳定
-- 项目里仍有少量历史中文编码污染，后续需要逐步清理
+- 项目里仍有历史中文编码污染，需要继续清理
+- PowerShell 某些输出会显示乱码，但不等于文件本身损坏
+- 思维地图增量更新失败不会阻塞聊天，但仍依赖结构化 LLM 输出质量
 
-这个文档解决的问题是：
-
-> 这个项目整体长什么样，现在做到哪了，还有哪些地方不能误判成“已经完全稳定”。
+这个文档回答的问题是：
+> 这个项目整体长什么样、模块怎么分、请求怎么流动、做到哪了、哪些地方还不能算稳定终态。

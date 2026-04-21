@@ -4,8 +4,13 @@ import { state } from './state.js';
 const KNOWLEDGE_NOTICE_HTML = `
   <div class="knowledge-placeholder">
     <div class="knowledge-placeholder-card">
-      <p class="eyebrow">Knowledge</p>
-      <h2>开发迭代中，请期待后续功能：</h2>
+      <div class="knowledge-placeholder-header">
+        <div>
+          <p class="eyebrow">Knowledge</p>
+          <h2>开发迭代中，请期待后续功能：</h2>
+        </div>
+        <button id="close-knowledge-view" class="ghost-button knowledge-close-button" type="button" title="关闭">×</button>
+      </div>
       <div class="knowledge-placeholder-list">
         <div class="knowledge-placeholder-item">
           <div class="knowledge-placeholder-title">一天啥也没干怎么就过去了？！</div>
@@ -57,6 +62,19 @@ export function bindKnowledgeEvents() {
     renderView();
     if (state.view === 'knowledge') {
       ensureKnowledgePlaceholder();
+    }
+  });
+
+  ensureKnowledgePlaceholder();
+  els.knowledgeView.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+
+    if (target.id === 'close-knowledge-view') {
+      state.view = 'chat';
+      renderView();
     }
   });
 }

@@ -65,11 +65,10 @@ textarea {
 
 .app-shell {
   height: 100vh;
-  max-width: 1320px;
-  margin: 0 auto;
+  width: 100vw;
   padding: 16px 14px 12px;
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: 260px minmax(0, 1fr) 260px;
   gap: 12px;
   overflow: hidden;
 }
@@ -83,8 +82,22 @@ textarea {
   box-shadow: var(--shadow);
   padding: 12px;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 12px;
+}
+
+.thought-map-sidebar {
+  height: 100%;
+  min-height: 0;
+  background: var(--panel);
+  border: 1px solid rgba(183, 157, 132, 0.4);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  padding: 12px;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) 150px;
+  gap: 10px;
+  overflow: hidden;
 }
 
 .conversation-sidebar-header {
@@ -93,8 +106,17 @@ textarea {
   gap: 8px;
 }
 
+.conversation-sidebar-footer {
+  display: flex;
+  justify-content: flex-start;
+}
+
 .sidebar-create-button {
   flex: 1 1 auto;
+}
+
+.sidebar-settings-button {
+  min-width: 86px;
 }
 
 .sidebar-delete-toggle {
@@ -203,12 +225,6 @@ textarea {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-}
-
-.top-left-tools {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
 .settings-panel,
@@ -549,6 +565,13 @@ h2 {
   gap: 6px;
 }
 
+.composer-field > .status-pill {
+  align-self: flex-start;
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+}
+
 .composer textarea {
   resize: none;
   min-height: 56px;
@@ -596,6 +619,18 @@ h2 {
   background: var(--warning-bg);
   color: var(--warning-text);
   font-size: 11px;
+}
+
+.thought-map-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.thought-map-toggle {
+  align-self: flex-start;
+  flex: 0 0 auto;
 }
 
 .status-pill.ready {
@@ -680,6 +715,111 @@ h2 {
 
 .knowledge-status {
   margin-top: 10px;
+}
+
+.thought-map-status {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.thought-map-empty {
+  padding: 12px;
+  font-size: 12px;
+}
+
+.thought-map-stage {
+  position: relative;
+  min-height: 0;
+  border: 1px solid rgba(183, 157, 132, 0.4);
+  border-radius: 16px;
+  background: rgba(255, 250, 243, 0.72);
+  overflow: hidden;
+}
+
+.thought-map-lines,
+.thought-map-nodes {
+  position: absolute;
+  inset: 0;
+}
+
+.thought-map-lines {
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.thought-map-detail {
+  min-height: 0;
+  border: 1px solid rgba(183, 157, 132, 0.4);
+  border-radius: 16px;
+  background: rgba(255, 250, 243, 0.72);
+  padding: 12px;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.thought-map-node {
+  position: absolute;
+  width: 86px;
+  height: 86px;
+  border-radius: 50%;
+  border: 1px solid rgba(183, 157, 132, 0.55);
+  background: rgba(255, 250, 243, 0.96);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 10px;
+  font-size: 12px;
+  line-height: 1.25;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(74, 48, 24, 0.06);
+  overflow: hidden;
+}
+
+.thought-map-node.user {
+  background: rgba(220, 205, 188, 0.96);
+  border-color: rgba(142, 95, 74, 0.42);
+}
+
+.thought-map-node.assistant {
+  background: rgba(255, 250, 243, 0.72);
+  opacity: 0.68;
+}
+
+.thought-map-node.active {
+  border-color: rgba(142, 95, 74, 0.65);
+  box-shadow: 0 0 0 4px rgba(171, 78, 46, 0.12);
+}
+
+.thought-map-node-label {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-word;
+}
+
+.thought-map-detail-title {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.thought-map-detail-meta,
+.thought-map-detail-list {
+  margin: 0;
+  color: var(--muted);
+}
+
+.thought-map-detail-list {
+  margin-top: 8px;
+  padding-left: 16px;
 }
 
 .knowledge-layout {
@@ -781,6 +921,25 @@ h2 {
   background: rgba(255, 250, 243, 0.86);
   padding: 24px 28px;
   box-shadow: var(--shadow);
+}
+
+.knowledge-placeholder-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.knowledge-close-button {
+  min-width: 38px;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  line-height: 1;
 }
 
 .knowledge-placeholder-list {
@@ -909,7 +1068,8 @@ h2 {
   }
 
   .conversation-sidebar,
-  .app-main {
+  .app-main,
+  .thought-map-sidebar {
     height: auto;
   }
 
@@ -931,6 +1091,10 @@ h2 {
 
   .conversation-list {
     max-height: 220px;
+  }
+
+  .thought-map-sidebar {
+    display: none;
   }
 
   .settings-span-2,

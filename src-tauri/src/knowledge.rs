@@ -1,6 +1,485 @@
 use super::*;
 
 #[tauri::command]
+pub(crate) fn get_conversation_map(app: AppHandle, conversation_id: i64) -> Result<ConversationMapGraph, String> {
+    let connection = crate::storage::open_database(&app)?;
+    load_conversation_map(&connection, conversation_id)
+}
+
+#[tauri::command]
+pub(crate) fn list_conversation_map_events(
+    app: AppHandle,
+    conversation_id: i64,
+) -> Result<Vec<ConversationMapEvent>, String> {
+    let connection = crate::storage::open_database(&app)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT id, conversation_id, qa_record_id, raw_llm_output, applied_operations_json, created_at
+             FROM conversation_map_events
+             WHERE conversation_id = ?1
+             ORDER BY created_at DESC, id DESC
+             LIMIT 50",
+        )
+        .map_err(|error| format!("Failed to read conversation map events: {error}"))?;
+
+    let rows = statement
+        .query_map([conversation_id], |row| {
+            Ok(ConversationMapEvent {
+                id: row.get(0)?,
+                conversation_id: row.get(1)?,
+                qa_record_id: row.get(2)?,
+                raw_llm_output: row.get(3)?,
+                applied_operations_json: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        })
+        .map_err(|error| format!("Failed to read conversation map events: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Failed to read conversation map events: {error}"))
+}
+
+#[tauri::command]
+pub(crate) async fn refresh_conversation_map(
+    app: AppHandle,
+    conversation_id: i64,
+    qa_record_id: i64,
+) -> Result<ConversationMapGraph, String> {
+    refresh_conversation_map_internal(app.clone(), conversation_id, qa_record_id).await?;
+    let connection = crate::storage::open_database(&app)?;
+    load_conversation_map(&connection, conversation_id)
+}
+
+pub(crate) async fn refresh_conversation_map_internal(
+    app: AppHandle,
+    conversation_id: i64,
+    qa_record_id: i64,
+) -> Result<(), String> {
+    let connection = crate::storage::open_database(&app)?;
+    let qa_row = connection
+        .query_row(
+            "SELECT question, answer, status
+             FROM qa_records
+             WHERE id = ?1 AND conversation_id = ?2",
+            params![qa_record_id, conversation_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| format!("Failed to read conversation map source record: {error}"))?;
+
+    let Some((question, answer, status)) = qa_row else {
+        return Ok(());
+    };
+
+    if status != "success" || answer.trim().is_empty() {
+        return Ok(());
+    }
+
+    let settings = crate::settings::load_settings(app.clone())?;
+    if settings.api_url.trim().is_empty() || settings.api_key.trim().is_empty() {
+        return Ok(());
+    }
+
+    let graph = load_conversation_map(&connection, conversation_id)?;
+    let system_prompt = "You update a conversation thought-map. Return JSON only. Do not rewrite the whole graph. Add or promote at most one user node for the current user turn, and add at most 3 assistant support nodes. Use short titles, usually 4 to 10 Chinese characters or 2 to 6 English words.";
+    let user_prompt = build_conversation_map_prompt(&graph, &question, &answer);
+
+    match crate::chat::send_model_text_request(
+        &app,
+        &settings,
+        AUXILIARY_MODEL,
+        "conversation_map_update",
+        Some(system_prompt),
+        &user_prompt,
+        &[],
+    )
+    .await
+    {
+        Ok(raw_text) => {
+            let parsed_text = match crate::chat::parse_model_text(&settings.api_url, &raw_text) {
+                Ok(text) => text,
+                Err(error) => {
+                    let _ = insert_conversation_map_event(
+                        &connection,
+                        conversation_id,
+                        qa_record_id,
+                        Some(raw_text),
+                        Some(serde_json::json!({"status":"error","message": format!("Failed to parse conversation map response: {error}")}).to_string()),
+                    );
+                    return Ok(());
+                }
+            };
+
+            let json_text = match extract_map_json(&parsed_text) {
+                Some(text) => text,
+                None => {
+                    let _ = insert_conversation_map_event(
+                        &connection,
+                        conversation_id,
+                        qa_record_id,
+                        Some(parsed_text.clone()),
+                        Some(serde_json::json!({"status":"error","message": format!("Conversation map update did not return valid JSON: {}", crate::chat::sanitize_text(&parsed_text, 280))}).to_string()),
+                    );
+                    return Ok(());
+                }
+            };
+
+            let update: ConversationMapUpdate = match serde_json::from_str(&json_text) {
+                Ok(update) => update,
+                Err(error) => {
+                    let _ = insert_conversation_map_event(
+                        &connection,
+                        conversation_id,
+                        qa_record_id,
+                        Some(parsed_text.clone()),
+                        Some(serde_json::json!({"status":"error","message": format!("Failed to parse conversation map JSON: {error}")}).to_string()),
+                    );
+                    return Ok(());
+                }
+            };
+
+            let applied_operations_json =
+                apply_conversation_map_update(&connection, conversation_id, qa_record_id, &question, &graph, update)?;
+
+            insert_conversation_map_event(
+                &connection,
+                conversation_id,
+                qa_record_id,
+                Some(parsed_text),
+                Some(applied_operations_json),
+            )?;
+            Ok(())
+        }
+        Err(error) => {
+            let _ = insert_conversation_map_event(
+                &connection,
+                conversation_id,
+                qa_record_id,
+                None,
+                Some(serde_json::json!({"status":"error","message": error}).to_string()),
+            );
+            Ok(())
+        }
+    }
+}
+
+fn build_conversation_map_prompt(graph: &ConversationMapGraph, question: &str, answer: &str) -> String {
+    let nodes_json = serde_json::to_string(&graph.nodes).unwrap_or_else(|_| "[]".to_string());
+    let edges_json = serde_json::to_string(&graph.edges).unwrap_or_else(|_| "[]".to_string());
+    format!(
+        "Current nodes:\n{nodes_json}\n\nCurrent edges:\n{edges_json}\n\nCurrent user question:\n{question}\n\nCurrent assistant answer:\n{answer}\n\nReturn JSON with this exact shape:\n{{\n  \"user_node_action\": {{\n    \"type\": \"match_user_node | promote_assistant_node | create_user_node\",\n    \"target_node_id\": 0,\n    \"title\": \"\",\n    \"parent_node_id\": 0,\n    \"relation_type\": \"continues | refines | branches\"\n  }},\n  \"assistant_nodes\": [\n    {{\n      \"title\": \"\",\n      \"parent_node_id\": 0,\n      \"relation_type\": \"supports | refines | branches\"\n    }}\n  ]\n}}\nRules:\n- assistant_nodes max 3\n- only reference existing node ids from Current nodes\n- if the question clearly follows an assistant node, use promote_assistant_node\n- if no strong match exists, create_user_node\n- if parent relation is unclear, use null parent_node_id\n- titles should be short and concrete\n- JSON only"
+    )
+}
+
+fn load_conversation_map(connection: &Connection, conversation_id: i64) -> Result<ConversationMapGraph, String> {
+    let mut node_statement = connection
+        .prepare(
+            "SELECT id, conversation_id, title, node_type, status, created_from_record_id, created_at, updated_at
+             FROM conversation_map_nodes
+             WHERE conversation_id = ?1 AND status = 'active'
+             ORDER BY updated_at DESC, created_at ASC, id ASC",
+        )
+        .map_err(|error| format!("Failed to read conversation map nodes: {error}"))?;
+
+    let nodes = node_statement
+        .query_map([conversation_id], |row| {
+            Ok(ConversationMapNode {
+                id: row.get(0)?,
+                conversation_id: row.get(1)?,
+                title: row.get(2)?,
+                node_type: row.get(3)?,
+                status: row.get(4)?,
+                created_from_record_id: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+            })
+        })
+        .map_err(|error| format!("Failed to read conversation map nodes: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Failed to read conversation map nodes: {error}"))?;
+
+    let mut edge_statement = connection
+        .prepare(
+            "SELECT id, conversation_id, from_node_id, to_node_id, relation_type
+             FROM conversation_map_edges
+             WHERE conversation_id = ?1
+             ORDER BY id ASC",
+        )
+        .map_err(|error| format!("Failed to read conversation map edges: {error}"))?;
+
+    let edges = edge_statement
+        .query_map([conversation_id], |row| {
+            Ok(ConversationMapEdge {
+                id: row.get(0)?,
+                conversation_id: row.get(1)?,
+                from_node_id: row.get(2)?,
+                to_node_id: row.get(3)?,
+                relation_type: row.get(4)?,
+            })
+        })
+        .map_err(|error| format!("Failed to read conversation map edges: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Failed to read conversation map edges: {error}"))?;
+
+    Ok(ConversationMapGraph { nodes, edges })
+}
+
+fn apply_conversation_map_update(
+    connection: &Connection,
+    conversation_id: i64,
+    qa_record_id: i64,
+    question: &str,
+    graph: &ConversationMapGraph,
+    update: ConversationMapUpdate,
+) -> Result<String, String> {
+    let now = Utc::now().timestamp_millis();
+    let mut node_index = HashMap::new();
+    for node in &graph.nodes {
+        node_index.insert(node.id, node.clone());
+    }
+
+    let anchor_node_id = match resolve_user_node_action(
+        connection,
+        conversation_id,
+        qa_record_id,
+        question,
+        &node_index,
+        &update.user_node_action,
+        now,
+    )? {
+        Some(id) => id,
+        None => insert_conversation_map_node(
+            connection,
+            conversation_id,
+            &fallback_map_title(question),
+            "user",
+            qa_record_id,
+            now,
+        )?,
+    };
+
+    let mut created_assistant_nodes = Vec::new();
+    for assistant_node in update.assistant_nodes.into_iter().take(3) {
+        let title = sanitize_map_title(&assistant_node.title);
+        if title.is_empty() {
+            continue;
+        }
+
+        let node_id = insert_conversation_map_node(
+            connection,
+            conversation_id,
+            &title,
+            "assistant",
+            qa_record_id,
+            now,
+        )?;
+
+        let parent_id = assistant_node
+            .parent_node_id
+            .filter(|id| node_index.contains_key(id) || *id == anchor_node_id)
+            .unwrap_or(anchor_node_id);
+
+        upsert_conversation_map_edge(
+            connection,
+            conversation_id,
+            parent_id,
+            node_id,
+            &normalize_relation_type(&assistant_node.relation_type, "supports"),
+            now,
+        )?;
+        created_assistant_nodes.push(node_id);
+    }
+
+    let applied = serde_json::json!({
+        "anchorNodeId": anchor_node_id,
+        "createdAssistantNodeIds": created_assistant_nodes,
+    })
+    .to_string();
+
+    Ok(applied)
+}
+
+fn resolve_user_node_action(
+    connection: &Connection,
+    conversation_id: i64,
+    qa_record_id: i64,
+    question: &str,
+    node_index: &HashMap<i64, ConversationMapNode>,
+    action: &ConversationMapUserAction,
+    now: i64,
+) -> Result<Option<i64>, String> {
+    match action.r#type.as_str() {
+        "match_user_node" => {
+            if let Some(node_id) = action.target_node_id {
+                if let Some(node) = node_index.get(&node_id) {
+                    if node.node_type == "user" {
+                        touch_conversation_map_node(connection, node_id, now)?;
+                        return Ok(Some(node_id));
+                    }
+                }
+            }
+            Ok(None)
+        }
+        "promote_assistant_node" => {
+            if let Some(node_id) = action.target_node_id {
+                if let Some(node) = node_index.get(&node_id) {
+                    if node.node_type == "assistant" {
+                        promote_conversation_map_node(connection, node_id, now)?;
+                        return Ok(Some(node_id));
+                    }
+                }
+            }
+            Ok(None)
+        }
+        "create_user_node" => {
+            let title = sanitize_map_title(&action.title);
+            let fallback_title = fallback_map_title(question);
+            let final_title = if title.is_empty() {
+                fallback_title.as_str()
+            } else {
+                title.as_str()
+            };
+            let node_id = insert_conversation_map_node(
+                connection,
+                conversation_id,
+                final_title,
+                "user",
+                qa_record_id,
+                now,
+            )?;
+
+            if let Some(parent_node_id) = action.parent_node_id {
+                if node_index.contains_key(&parent_node_id) {
+                    upsert_conversation_map_edge(
+                        connection,
+                        conversation_id,
+                        parent_node_id,
+                        node_id,
+                        &normalize_relation_type(&action.relation_type, "branches"),
+                        now,
+                    )?;
+                }
+            }
+
+            Ok(Some(node_id))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn insert_conversation_map_node(
+    connection: &Connection,
+    conversation_id: i64,
+    title: &str,
+    node_type: &str,
+    qa_record_id: i64,
+    now: i64,
+) -> Result<i64, String> {
+    connection
+        .execute(
+            "INSERT INTO conversation_map_nodes (conversation_id, title, node_type, status, created_from_record_id, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 'active', ?4, ?5, ?6)",
+            params![conversation_id, title, node_type, qa_record_id, now, now],
+        )
+        .map_err(|error| format!("Failed to insert conversation map node: {error}"))?;
+    Ok(connection.last_insert_rowid())
+}
+
+fn upsert_conversation_map_edge(
+    connection: &Connection,
+    conversation_id: i64,
+    from_node_id: i64,
+    to_node_id: i64,
+    relation_type: &str,
+    now: i64,
+) -> Result<(), String> {
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO conversation_map_edges (conversation_id, from_node_id, to_node_id, relation_type, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![conversation_id, from_node_id, to_node_id, relation_type, now],
+        )
+        .map_err(|error| format!("Failed to insert conversation map edge: {error}"))?;
+    Ok(())
+}
+
+fn touch_conversation_map_node(connection: &Connection, node_id: i64, now: i64) -> Result<(), String> {
+    connection
+        .execute(
+            "UPDATE conversation_map_nodes SET updated_at = ?1 WHERE id = ?2",
+            params![now, node_id],
+        )
+        .map_err(|error| format!("Failed to touch conversation map node: {error}"))?;
+    Ok(())
+}
+
+fn promote_conversation_map_node(connection: &Connection, node_id: i64, now: i64) -> Result<(), String> {
+    connection
+        .execute(
+            "UPDATE conversation_map_nodes
+             SET node_type = 'user', updated_at = ?1
+             WHERE id = ?2",
+            params![now, node_id],
+        )
+        .map_err(|error| format!("Failed to promote conversation map node: {error}"))?;
+    Ok(())
+}
+
+fn insert_conversation_map_event(
+    connection: &Connection,
+    conversation_id: i64,
+    qa_record_id: i64,
+    raw_llm_output: Option<String>,
+    applied_operations_json: Option<String>,
+) -> Result<(), String> {
+    let now = Utc::now().timestamp_millis();
+    connection
+        .execute(
+            "INSERT INTO conversation_map_events (conversation_id, qa_record_id, raw_llm_output, applied_operations_json, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![conversation_id, qa_record_id, raw_llm_output, applied_operations_json, now],
+        )
+        .map_err(|error| format!("Failed to write conversation map event: {error}"))?;
+    Ok(())
+}
+
+fn extract_map_json(text: &str) -> Option<String> {
+    let start = text.find('{')?;
+    let end = text.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    Some(text[start..=end].to_string())
+}
+
+fn sanitize_map_title(title: &str) -> String {
+    let compact = title
+        .replace(['\r', '\n'], " ")
+        .replace(['[', ']', '【', '】', '"', '\''], "")
+        .trim()
+        .to_string();
+    compact.chars().take(18).collect::<String>().trim().to_string()
+}
+
+fn fallback_map_title(question: &str) -> String {
+    let compact = crate::chat::summarize_question(question);
+    compact.chars().take(18).collect::<String>().trim().to_string()
+}
+
+fn normalize_relation_type(relation_type: &str, fallback: &str) -> String {
+    match relation_type {
+        "continues" | "refines" | "supports" | "branches" => relation_type.to_string(),
+        _ => fallback.to_string(),
+    }
+}
+
+#[tauri::command]
 pub(crate) async fn build_knowledge_map(app: AppHandle) -> Result<BuildKnowledgeMapResult, String> {
     build_knowledge_map_internal(app, true).await
 }

@@ -107,6 +107,47 @@ struct SessionMemory {
     risks_or_issues: Vec<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ConversationMapNode {
+    id: i64,
+    conversation_id: i64,
+    title: String,
+    node_type: String,
+    status: String,
+    created_from_record_id: Option<i64>,
+    created_at: i64,
+    updated_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ConversationMapEdge {
+    id: i64,
+    conversation_id: i64,
+    from_node_id: i64,
+    to_node_id: i64,
+    relation_type: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ConversationMapEvent {
+    id: i64,
+    conversation_id: i64,
+    qa_record_id: i64,
+    raw_llm_output: Option<String>,
+    applied_operations_json: Option<String>,
+    created_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ConversationMapGraph {
+    nodes: Vec<ConversationMapNode>,
+    edges: Vec<ConversationMapEdge>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct KnowledgeNodeSummary {
@@ -224,6 +265,43 @@ struct ExistingKnowledgeNode {
     terms: HashSet<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConversationMapUpdate {
+    #[serde(alias = "user_node_action")]
+    user_node_action: ConversationMapUserAction,
+    #[serde(default, alias = "assistant_nodes")]
+    assistant_nodes: Vec<ConversationMapAssistantNodeDraft>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConversationMapUserAction {
+    #[serde(default)]
+    r#type: String,
+    #[serde(alias = "target_node_id")]
+    target_node_id: Option<i64>,
+    #[serde(default)]
+    title: String,
+    #[serde(alias = "parent_node_id")]
+    parent_node_id: Option<i64>,
+    #[serde(default)]
+    #[serde(alias = "relation_type")]
+    relation_type: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConversationMapAssistantNodeDraft {
+    #[serde(default)]
+    title: String,
+    #[serde(alias = "parent_node_id")]
+    parent_node_id: Option<i64>,
+    #[serde(default)]
+    #[serde(alias = "relation_type")]
+    relation_type: String,
+}
+
 #[derive(Debug, Serialize)]
 struct ChatCompletionRequest<'a> {
     model: &'a str,
@@ -328,6 +406,9 @@ pub fn run() {
             chat::list_history_records,
             chat::get_history_item,
             chat::ask,
+            knowledge::get_conversation_map,
+            knowledge::list_conversation_map_events,
+            knowledge::refresh_conversation_map,
             knowledge::build_knowledge_map,
             knowledge::list_knowledge_nodes,
             knowledge::get_knowledge_node,

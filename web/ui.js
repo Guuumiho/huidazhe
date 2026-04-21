@@ -21,6 +21,13 @@ export const els = {
   chatList: document.querySelector('#chat-list'),
   emptyState: document.querySelector('#empty-state'),
   chatView: document.querySelector('#chat-view'),
+  thoughtMapSidebar: document.querySelector('#thought-map-sidebar'),
+  thoughtMapStatus: document.querySelector('#thought-map-status'),
+  thoughtMapEmpty: document.querySelector('#thought-map-empty'),
+  thoughtMapStage: document.querySelector('#thought-map-stage'),
+  thoughtMapLines: document.querySelector('#thought-map-lines'),
+  thoughtMapNodes: document.querySelector('#thought-map-nodes'),
+  thoughtMapDetail: document.querySelector('#thought-map-detail'),
   knowledgeView: document.querySelector('#knowledge-view'),
   todayFilter: document.querySelector('#today-filter'),
   buildKnowledge: document.querySelector('#build-knowledge'),
@@ -135,6 +142,7 @@ export function renderView() {
   els.chatView.classList.toggle('hidden', showingKnowledge);
   els.knowledgeView.classList.toggle('hidden', !showingKnowledge);
   els.composer.classList.toggle('hidden', showingKnowledge);
+  els.thoughtMapSidebar?.classList.toggle('hidden', showingKnowledge);
   els.toggleKnowledge.classList.toggle('active', showingKnowledge);
   els.toggleKnowledge.textContent = showingKnowledge ? '回到问答' : '知识地图';
 }

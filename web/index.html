@@ -16,15 +16,12 @@
           </button>
         </div>
         <div id="conversation-list" class="conversation-list"></div>
+        <div class="conversation-sidebar-footer">
+          <button id="toggle-settings" class="ghost-button sidebar-settings-button" type="button">设置</button>
+        </div>
       </aside>
 
       <section class="app-main">
-        <div class="top-left-tools">
-          <span id="config-status" class="status-pill">未配置 API</span>
-          <button id="toggle-settings" class="ghost-button" type="button">设置</button>
-          <button id="toggle-knowledge" class="ghost-button" type="button">知识地图</button>
-        </div>
-
         <section id="settings-panel" class="settings-panel hidden">
           <div class="settings-header">
             <div>
@@ -106,7 +103,7 @@
 
         <form id="ask-form" class="composer">
           <label class="field composer-field">
-            <span>输入问题</span>
+            <span id="config-status" class="status-pill">未配置 API</span>
             <textarea
               id="question-input"
               rows="4"
@@ -123,6 +120,33 @@
           </div>
         </form>
       </section>
+
+      <aside id="thought-map-sidebar" class="thought-map-sidebar">
+        <div class="thought-map-header">
+          <div>
+            <p class="eyebrow">Thought Map</p>
+            <h2>思维地图</h2>
+          </div>
+          <button id="toggle-knowledge" class="ghost-button thought-map-toggle" type="button">知识地图</button>
+        </div>
+
+        <div id="thought-map-status" class="thought-map-status">
+          当前窗口的思考路径会在这里逐步展开。
+        </div>
+
+        <div id="thought-map-empty" class="empty-state thought-map-empty">
+          继续提问后，这里会自动生成当前对话窗口的思维链节点。
+        </div>
+
+        <div id="thought-map-stage" class="thought-map-stage hidden">
+          <svg id="thought-map-lines" class="thought-map-lines"></svg>
+          <div id="thought-map-nodes" class="thought-map-nodes"></div>
+        </div>
+
+        <div id="thought-map-detail" class="thought-map-detail">
+          选中一个节点后，这里会显示它的类型、关系和更新时间。
+        </div>
+      </aside>
     </div>
 
     <div id="conversation-mode-modal" class="mode-modal hidden">

@@ -72,6 +72,36 @@ pub(crate) fn open_database(app: &AppHandle) -> Result<Connection, String> {
                 conversation_id INTEGER PRIMARY KEY,
                 memory_json TEXT NOT NULL DEFAULT '{}',
                 updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS conversation_map_nodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                node_type TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_from_record_id INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS conversation_map_edges (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL,
+                from_node_id INTEGER NOT NULL,
+                to_node_id INTEGER NOT NULL,
+                relation_type TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                UNIQUE(conversation_id, from_node_id, to_node_id, relation_type)
+            );
+
+            CREATE TABLE IF NOT EXISTS conversation_map_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL,
+                qa_record_id INTEGER NOT NULL,
+                raw_llm_output TEXT,
+                applied_operations_json TEXT,
+                created_at INTEGER NOT NULL
             );",
         )
         .map_err(|error| format!("Failed to initialize database: {error}"))?;

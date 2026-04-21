@@ -1,4 +1,5 @@
 import { state } from './state.js';
+import { loadConversationMap, scheduleConversationMapRefresh } from './thought-map.js';
 import { loadKnowledgeStatus } from './knowledge.js';
 import { collectSettings, saveSettings } from './settings.js';
 import {
@@ -411,6 +412,7 @@ export async function switchConversation(conversationId) {
   setMemoryMode(currentConversation?.mode || 'single');
   renderConversations();
   await loadRecords();
+  await loadConversationMap();
   await saveSettings(false);
 }
 
@@ -423,6 +425,7 @@ async function createConversation(mode) {
   setMemoryMode(conversation.mode);
   renderConversations();
   renderRecords();
+  await loadConversationMap();
   setFormMessage('');
   hideConversationModeModal();
   await saveSettings(false);
@@ -443,6 +446,7 @@ async function removeConversation(conversationId) {
   setMemoryMode(currentConversation?.mode || 'single');
   renderConversations();
   await loadRecords();
+  await loadConversationMap();
   await saveSettings(false);
 }
 
@@ -545,10 +549,9 @@ async function submitQuestion(draftQuestion, activeConversationId) {
     });
 
     if (result.ok && result.record) {
-      removePendingRecord(activeConversationId, tempRecord.id);
-      if (state.currentConversationId === activeConversationId) {
-        await loadRecords();
-      }
+      removeRenderedPendingRecord(activeConversationId, tempRecord.id);
+      await loadRecords();
+      scheduleConversationMapRefresh();
       setFormMessage('');
       await loadConversations();
       loadKnowledgeStatus().catch(() => {});

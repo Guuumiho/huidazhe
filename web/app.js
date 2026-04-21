@@ -1,6 +1,7 @@
 import { bindChatEvents, loadConversations, loadRecords, renderConversations } from './chat.js';
 import { bindKnowledgeEvents, refreshKnowledgeView, renderKnowledgeMap, renderKnowledgeTodayToggle } from './knowledge.js';
 import { bindSettingsEvents, loadSettings } from './settings.js';
+import { loadConversationMap, renderThoughtMap } from './thought-map.js';
 import { ensureTauri, els, renderConversationDeleteToggle, renderMemoryMode, renderView, setConfigStatus, setFormMessage } from './ui.js';
 
 async function bootstrap() {
@@ -21,6 +22,7 @@ async function bootstrap() {
     await loadConversations();
     renderConversations();
     await loadRecords();
+    await loadConversationMap();
   } catch (error) {
     setFormMessage(`History load failed: ${String(error)}`, 'error');
   }
@@ -41,6 +43,7 @@ bindKnowledgeEvents();
 
 window.addEventListener('resize', () => {
   renderKnowledgeMap();
+  renderThoughtMap();
 });
 
 bootstrap();
