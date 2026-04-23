@@ -1,4 +1,4 @@
-import { state } from './state.js';
+﻿import { state } from './state.js';
 import { els, formatTime, invoke, relationColor } from './ui.js';
 
 const NODE_SIZE = 86;

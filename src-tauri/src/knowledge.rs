@@ -87,7 +87,7 @@ pub(crate) async fn refresh_conversation_map_internal(
     }
 
     let graph = load_conversation_map(&connection, conversation_id)?;
-    let system_prompt = "You update a conversation thought-map. Return JSON only. Do not rewrite the whole graph. Add or promote at most one user node for the current user turn, and add at most 3 assistant support nodes. Use short titles, usually 4 to 10 Chinese characters or 2 to 6 English words.";
+    let system_prompt = "You are a thought-map node and relation extractor. Return valid JSON only, no markdown, no explanation. Prefer user content. Assistant content can only contribute high-value conclusions, reframings, or clarified structure. Only output incremental additions for the current round. If the current round adds no new structure, return {\"new_nodes\":[],\"new_edges\":[]}. In new_nodes, put the primary user-derived theme first when a new user theme is introduced.";
     let user_prompt = build_conversation_map_prompt(&graph, &question, &answer);
 
     match crate::chat::send_model_text_request(
@@ -130,7 +130,7 @@ pub(crate) async fn refresh_conversation_map_internal(
                 }
             };
 
-            let update: ConversationMapUpdate = match serde_json::from_str(&json_text) {
+            let update: ConversationMapExtraction = match serde_json::from_str(&json_text) {
                 Ok(update) => update,
                 Err(error) => {
                     let _ = insert_conversation_map_event(
@@ -170,17 +170,20 @@ pub(crate) async fn refresh_conversation_map_internal(
 }
 
 fn build_conversation_map_prompt(graph: &ConversationMapGraph, question: &str, answer: &str) -> String {
-    let nodes_json = serde_json::to_string(&graph.nodes).unwrap_or_else(|_| "[]".to_string());
-    let edges_json = serde_json::to_string(&graph.edges).unwrap_or_else(|_| "[]".to_string());
+    let graph_json = serde_json::json!({
+        "nodes": &graph.nodes,
+        "edges": &graph.edges,
+    })
+    .to_string();
     format!(
-        "Current nodes:\n{nodes_json}\n\nCurrent edges:\n{edges_json}\n\nCurrent user question:\n{question}\n\nCurrent assistant answer:\n{answer}\n\nReturn JSON with this exact shape:\n{{\n  \"user_node_action\": {{\n    \"type\": \"match_user_node | promote_assistant_node | create_user_node\",\n    \"target_node_id\": 0,\n    \"title\": \"\",\n    \"parent_node_id\": 0,\n    \"relation_type\": \"continues | refines | branches\"\n  }},\n  \"assistant_nodes\": [\n    {{\n      \"title\": \"\",\n      \"parent_node_id\": 0,\n      \"relation_type\": \"supports | refines | branches\"\n    }}\n  ]\n}}\nRules:\n- assistant_nodes max 3\n- only reference existing node ids from Current nodes\n- if the question clearly follows an assistant node, use promote_assistant_node\n- if no strong match exists, create_user_node\n- if parent relation is unclear, use null parent_node_id\n- titles should be short and concrete\n- JSON only"
+        "你是“思路图节点/关系提取器”。\n\n任务目标\n根据【用户-AI对话】和【已有思路图 JSON】，抽取本轮对话中“新增的主题节点、节点描述、主题关系”，用于持续完善用户思路发展路径图。\n\n输入\n1. 对话记录：\nuser: 用户本轮输入\nassistant: AI本轮回复\n2. 已有思路图：\n{graph_json}\n\n输出要求\n只输出合法 JSON，不能输出解释、注释、markdown。\n\n输出格式：\n{{\n  \"new_nodes\": [\n    {{\n      \"id\": \"temp_1\",\n      \"label\": \"节点标题\",\n      \"type\": \"目标|子目标|任务|状态|问题定义|方法|原则|产出物|依赖\",\n      \"description\": \"对该节点的简洁描述，说明它在用户思路中的含义\"\n    }}\n  ],\n  \"new_edges\": [\n    {{\n      \"sid\": \"源节点id\",\n      \"tid\": \"目标节点id\",\n      \"type\": \"拆分|导致|支撑|依赖|用于|澄清|转化|对标\"\n    }}\n  ]\n}}\n\n抽取原则\n1. 优先提取用户内容\n主要依据 user 的表述提取节点和关系。\nassistant 只作为辅助参考，且主要只看其中的“结论/判断/重定义”部分。\n不要把 assistant 里的执行建议、时间安排、措辞包装机械地提成节点，除非它是在重新定义用户问题结构。\n2. 只提取“新增信息”\n如果某主题在已有 graph_json 中已存在，且本轮没有新增内涵，不重复输出。\n若用户是在细化已有节点，应新增“更具体的子节点”或“新的关系”，不要重复旧节点。\n若只是换一种说法表达同一主题，不新增。\n3. 节点抽取标准\n仅提取对“思路结构”有价值的主题，优先包括：长期目标、中间目标/子目标、具体任务模块、当前状态/阻碍、对问题的新定义、方法原则、关键产出物、外部参考/依赖对象。\n不要提取：寒暄、情绪修饰词、纯执行细节、没有独立主题意义的句子。\n4. 关系抽取标准\n关系类型：拆分、导致、支撑、依赖、用于、澄清、转化、对标。\n5. AI 结论使用规则\n只有当 assistant 的“结论”是在概括用户隐含状态、重定义用户任务，或比用户原话更结构化且不偏离用户意图时，才可吸收为新节点或关系。若 assistant 只是给建议，不要提取。\n6. 去重与合并\n若新主题明显属于已有节点的组成部分，则优先输出为子节点，并建立合理关系。\n若多个短语本质是同一主题，合并成一个节点。\nlabel 要短，description 要补足含义。\n7. ID 规则\n新节点 id 使用 temp_1、temp_2 ...；new_edges 中允许引用已有节点 id 和新节点 id。\n8. 额外约束\n- 如果当前轮引入了新的用户核心主题，请把它放在 new_nodes 的第一个位置。\n- assistant 衍生节点最多 3 个。\n- 如果没有新增，输出 {{\"new_nodes\":[],\"new_edges\":[]}}。\n\n已有思路图 JSON：\n{graph_json}\n\n本轮对话：\nuser: {question}\nassistant: {answer}"
     )
 }
 
 fn load_conversation_map(connection: &Connection, conversation_id: i64) -> Result<ConversationMapGraph, String> {
     let mut node_statement = connection
         .prepare(
-            "SELECT id, conversation_id, title, node_type, status, created_from_record_id, created_at, updated_at
+            "SELECT id, conversation_id, title, node_type, topic_type, description, status, created_from_record_id, created_at, updated_at
              FROM conversation_map_nodes
              WHERE conversation_id = ?1 AND status = 'active'
              ORDER BY updated_at DESC, created_at ASC, id ASC",
@@ -192,12 +195,14 @@ fn load_conversation_map(connection: &Connection, conversation_id: i64) -> Resul
             Ok(ConversationMapNode {
                 id: row.get(0)?,
                 conversation_id: row.get(1)?,
-                title: row.get(2)?,
+                label: row.get(2)?,
                 node_type: row.get(3)?,
-                status: row.get(4)?,
-                created_from_record_id: row.get(5)?,
-                created_at: row.get(6)?,
-                updated_at: row.get(7)?,
+                topic_type: row.get(4)?,
+                description: row.get(5)?,
+                status: row.get(6)?,
+                created_from_record_id: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
             })
         })
         .map_err(|error| format!("Failed to read conversation map nodes: {error}"))?
@@ -236,156 +241,166 @@ fn apply_conversation_map_update(
     qa_record_id: i64,
     question: &str,
     graph: &ConversationMapGraph,
-    update: ConversationMapUpdate,
+    update: ConversationMapExtraction,
 ) -> Result<String, String> {
     let now = Utc::now().timestamp_millis();
     let mut node_index = HashMap::new();
     for node in &graph.nodes {
         node_index.insert(node.id, node.clone());
     }
+    let mut existing_by_normalized = HashMap::new();
+    for node in &graph.nodes {
+        existing_by_normalized.insert(normalize_map_label(&node.label), node.id);
+    }
 
-    let anchor_node_id = match resolve_user_node_action(
-        connection,
-        conversation_id,
-        qa_record_id,
-        question,
-        &node_index,
-        &update.user_node_action,
-        now,
-    )? {
-        Some(id) => id,
-        None => insert_conversation_map_node(
-            connection,
-            conversation_id,
-            &fallback_map_title(question),
-            "user",
-            qa_record_id,
-            now,
-        )?,
-    };
+    let mut temp_to_real = HashMap::<String, i64>::new();
+    let mut user_anchor_node_id = None;
+    let mut created_nodes = Vec::new();
+    let mut reused_nodes = Vec::new();
+    let mut new_nodes = update.new_nodes;
 
-    let mut created_assistant_nodes = Vec::new();
-    for assistant_node in update.assistant_nodes.into_iter().take(3) {
-        let title = sanitize_map_title(&assistant_node.title);
-        if title.is_empty() {
+    if new_nodes.is_empty() && graph.nodes.is_empty() {
+        new_nodes.push(ConversationMapDraftNode {
+            id: "temp_1".to_string(),
+            label: fallback_map_title(question),
+            r#type: "问题定义".to_string(),
+            description: format!("当前对话新引入的核心问题：{}", crate::chat::sanitize_text(question, 48)),
+        });
+    }
+
+    for (index, draft_node) in new_nodes.iter().enumerate() {
+        let label = sanitize_map_title(&draft_node.label);
+        if label.is_empty() {
             continue;
         }
 
-        let node_id = insert_conversation_map_node(
-            connection,
-            conversation_id,
-            &title,
-            "assistant",
-            qa_record_id,
-            now,
-        )?;
+        let normalized = normalize_map_label(&label);
+        let is_primary_user_node = index == 0;
+        let node_id = if let Some(existing_id) = existing_by_normalized.get(&normalized).copied() {
+            touch_conversation_map_node(connection, existing_id, now)?;
+            update_conversation_map_node_metadata(
+                connection,
+                existing_id,
+                &normalize_topic_type(&draft_node.r#type),
+                &sanitize_map_description(&draft_node.description, question),
+                now,
+            )?;
+            if is_primary_user_node {
+                promote_conversation_map_node(connection, existing_id, now)?;
+                user_anchor_node_id = Some(existing_id);
+            }
+            reused_nodes.push(existing_id);
+            existing_id
+        } else {
+            let visual_type = if is_primary_user_node { "user" } else { "assistant" };
+            let inserted_id = insert_conversation_map_node(
+                connection,
+                conversation_id,
+                &label,
+                visual_type,
+                &normalize_topic_type(&draft_node.r#type),
+                &sanitize_map_description(&draft_node.description, question),
+                qa_record_id,
+                now,
+            )?;
+            existing_by_normalized.insert(normalized, inserted_id);
+            if is_primary_user_node {
+                user_anchor_node_id = Some(inserted_id);
+            }
+            created_nodes.push(inserted_id);
+            inserted_id
+        };
 
-        let parent_id = assistant_node
-            .parent_node_id
-            .filter(|id| node_index.contains_key(id) || *id == anchor_node_id)
-            .unwrap_or(anchor_node_id);
+        if !draft_node.id.trim().is_empty() {
+            temp_to_real.insert(draft_node.id.trim().to_string(), node_id);
+        }
+    }
+
+    let fallback_anchor_id = user_anchor_node_id.or_else(|| {
+        graph.nodes
+            .iter()
+            .filter(|node| node.node_type == "user")
+            .max_by_key(|node| node.updated_at)
+            .map(|node| node.id)
+    });
+
+    let mut created_edges = Vec::new();
+    for draft_edge in update.new_edges {
+        let Some(from_node_id) = resolve_graph_node_reference(&draft_edge.sid, &temp_to_real, &node_index) else {
+            continue;
+        };
+        let Some(to_node_id) = resolve_graph_node_reference(&draft_edge.tid, &temp_to_real, &node_index) else {
+            continue;
+        };
+        if from_node_id == to_node_id {
+            continue;
+        }
 
         upsert_conversation_map_edge(
             connection,
             conversation_id,
-            parent_id,
-            node_id,
-            &normalize_relation_type(&assistant_node.relation_type, "supports"),
+            from_node_id,
+            to_node_id,
+            &normalize_relation_type(&draft_edge.r#type),
             now,
         )?;
-        created_assistant_nodes.push(node_id);
+        created_edges.push(serde_json::json!({
+            "from": from_node_id,
+            "to": to_node_id,
+            "type": normalize_relation_type(&draft_edge.r#type),
+        }));
     }
 
-    let applied = serde_json::json!({
-        "anchorNodeId": anchor_node_id,
-        "createdAssistantNodeIds": created_assistant_nodes,
-    })
-    .to_string();
+    if let Some(anchor_id) = fallback_anchor_id {
+        let has_anchor_edge = created_edges.iter().any(|edge| {
+            edge.get("from").and_then(|value| value.as_i64()) == Some(anchor_id)
+                || edge.get("to").and_then(|value| value.as_i64()) == Some(anchor_id)
+        });
 
-    Ok(applied)
-}
-
-fn resolve_user_node_action(
-    connection: &Connection,
-    conversation_id: i64,
-    qa_record_id: i64,
-    question: &str,
-    node_index: &HashMap<i64, ConversationMapNode>,
-    action: &ConversationMapUserAction,
-    now: i64,
-) -> Result<Option<i64>, String> {
-    match action.r#type.as_str() {
-        "match_user_node" => {
-            if let Some(node_id) = action.target_node_id {
-                if let Some(node) = node_index.get(&node_id) {
-                    if node.node_type == "user" {
-                        touch_conversation_map_node(connection, node_id, now)?;
-                        return Ok(Some(node_id));
-                    }
+        if !has_anchor_edge {
+            for created_node_id in &created_nodes {
+                if *created_node_id == anchor_id {
+                    continue;
                 }
+                upsert_conversation_map_edge(
+                    connection,
+                    conversation_id,
+                    anchor_id,
+                    *created_node_id,
+                    "支撑",
+                    now,
+                )?;
+                created_edges.push(serde_json::json!({
+                    "from": anchor_id,
+                    "to": created_node_id,
+                    "type": "支撑",
+                }));
             }
-            Ok(None)
         }
-        "promote_assistant_node" => {
-            if let Some(node_id) = action.target_node_id {
-                if let Some(node) = node_index.get(&node_id) {
-                    if node.node_type == "assistant" {
-                        promote_conversation_map_node(connection, node_id, now)?;
-                        return Ok(Some(node_id));
-                    }
-                }
-            }
-            Ok(None)
-        }
-        "create_user_node" => {
-            let title = sanitize_map_title(&action.title);
-            let fallback_title = fallback_map_title(question);
-            let final_title = if title.is_empty() {
-                fallback_title.as_str()
-            } else {
-                title.as_str()
-            };
-            let node_id = insert_conversation_map_node(
-                connection,
-                conversation_id,
-                final_title,
-                "user",
-                qa_record_id,
-                now,
-            )?;
-
-            if let Some(parent_node_id) = action.parent_node_id {
-                if node_index.contains_key(&parent_node_id) {
-                    upsert_conversation_map_edge(
-                        connection,
-                        conversation_id,
-                        parent_node_id,
-                        node_id,
-                        &normalize_relation_type(&action.relation_type, "branches"),
-                        now,
-                    )?;
-                }
-            }
-
-            Ok(Some(node_id))
-        }
-        _ => Ok(None),
     }
+
+    Ok(serde_json::json!({
+        "createdNodeIds": created_nodes,
+        "reusedNodeIds": reused_nodes,
+        "edges": created_edges,
+    }).to_string())
 }
 
 fn insert_conversation_map_node(
     connection: &Connection,
     conversation_id: i64,
-    title: &str,
+    label: &str,
     node_type: &str,
+    topic_type: &str,
+    description: &str,
     qa_record_id: i64,
     now: i64,
 ) -> Result<i64, String> {
     connection
         .execute(
-            "INSERT INTO conversation_map_nodes (conversation_id, title, node_type, status, created_from_record_id, created_at, updated_at)
-             VALUES (?1, ?2, ?3, 'active', ?4, ?5, ?6)",
-            params![conversation_id, title, node_type, qa_record_id, now, now],
+            "INSERT INTO conversation_map_nodes (conversation_id, title, node_type, topic_type, description, status, created_from_record_id, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'active', ?6, ?7, ?8)",
+            params![conversation_id, label, node_type, topic_type, description, qa_record_id, now, now],
         )
         .map_err(|error| format!("Failed to insert conversation map node: {error}"))?;
     Ok(connection.last_insert_rowid())
@@ -431,6 +446,26 @@ fn promote_conversation_map_node(connection: &Connection, node_id: i64, now: i64
     Ok(())
 }
 
+fn update_conversation_map_node_metadata(
+    connection: &Connection,
+    node_id: i64,
+    topic_type: &str,
+    description: &str,
+    now: i64,
+) -> Result<(), String> {
+    connection
+        .execute(
+            "UPDATE conversation_map_nodes
+             SET topic_type = CASE WHEN ?1 <> '' THEN ?1 ELSE topic_type END,
+                 description = CASE WHEN ?2 <> '' THEN ?2 ELSE description END,
+                 updated_at = ?3
+             WHERE id = ?4",
+            params![topic_type, description, now, node_id],
+        )
+        .map_err(|error| format!("Failed to update conversation map node metadata: {error}"))?;
+    Ok(())
+}
+
 fn insert_conversation_map_event(
     connection: &Connection,
     conversation_id: i64,
@@ -472,11 +507,50 @@ fn fallback_map_title(question: &str) -> String {
     compact.chars().take(18).collect::<String>().trim().to_string()
 }
 
-fn normalize_relation_type(relation_type: &str, fallback: &str) -> String {
-    match relation_type {
-        "continues" | "refines" | "supports" | "branches" => relation_type.to_string(),
-        _ => fallback.to_string(),
+fn sanitize_map_description(description: &str, question: &str) -> String {
+    let compact = description.replace(['\r', '\n'], " ").trim().to_string();
+    if compact.is_empty() {
+        format!("围绕“{}”形成的新增思路节点。", crate::chat::sanitize_text(question, 24))
+    } else {
+        crate::chat::sanitize_text(&compact, 120)
     }
+}
+
+fn normalize_map_label(label: &str) -> String {
+    label
+        .trim()
+        .to_lowercase()
+        .replace([' ', '\n', '\r', '\t', '，', '。', '：', ':'], "")
+}
+
+fn normalize_topic_type(topic_type: &str) -> String {
+    match topic_type.trim() {
+        "目标" | "子目标" | "任务" | "状态" | "问题定义" | "方法" | "原则" | "产出物" | "依赖" => topic_type.trim().to_string(),
+        _ => "任务".to_string(),
+    }
+}
+
+fn normalize_relation_type(relation_type: &str) -> String {
+    match relation_type.trim() {
+        "拆分" | "导致" | "支撑" | "依赖" | "用于" | "澄清" | "转化" | "对标" => relation_type.trim().to_string(),
+        _ => "支撑".to_string(),
+    }
+}
+
+fn resolve_graph_node_reference(
+    reference: &str,
+    temp_to_real: &HashMap<String, i64>,
+    node_index: &HashMap<i64, ConversationMapNode>,
+) -> Option<i64> {
+    let trimmed = reference.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(id) = temp_to_real.get(trimmed).copied() {
+        return Some(id);
+    }
+    let parsed = trimmed.parse::<i64>().ok()?;
+    node_index.contains_key(&parsed).then_some(parsed)
 }
 
 #[tauri::command]

@@ -79,6 +79,8 @@ pub(crate) fn open_database(app: &AppHandle) -> Result<Connection, String> {
                 conversation_id INTEGER NOT NULL,
                 title TEXT NOT NULL,
                 node_type TEXT NOT NULL,
+                topic_type TEXT NOT NULL DEFAULT '',
+                description TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'active',
                 created_from_record_id INTEGER,
                 created_at INTEGER NOT NULL,
@@ -117,6 +119,12 @@ pub(crate) fn open_database(app: &AppHandle) -> Result<Connection, String> {
         .ok();
     connection
         .execute_batch("ALTER TABLE qa_records ADD COLUMN prompt_mode TEXT NOT NULL DEFAULT 'single';")
+        .ok();
+    connection
+        .execute_batch("ALTER TABLE conversation_map_nodes ADD COLUMN topic_type TEXT NOT NULL DEFAULT '';")
+        .ok();
+    connection
+        .execute_batch("ALTER TABLE conversation_map_nodes ADD COLUMN description TEXT NOT NULL DEFAULT '';")
         .ok();
     connection
         .execute("UPDATE qa_records SET prompt_mode = 'single' WHERE prompt_mode IS NULL OR prompt_mode = ''", [])

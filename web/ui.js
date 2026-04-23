@@ -1,4 +1,4 @@
-import { state } from './state.js';
+﻿import { state } from './state.js';
 
 export const invoke = window.__TAURI__?.core?.invoke;
 
@@ -46,7 +46,7 @@ export const els = {
 };
 
 const QUESTION_INPUT_BASE_HEIGHT = 56;
-const QUESTION_INPUT_EXPANDED_HEIGHT = 112;
+const QUESTION_INPUT_EXPANDED_HEIGHT = 240;
 
 export function ensureTauri() {
   if (!invoke) {

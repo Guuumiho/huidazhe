@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   color-scheme: light;
   --bg: #f4efe7;
   --panel: rgba(255, 253, 248, 0.94);
@@ -197,6 +197,32 @@ textarea {
   justify-content: space-between;
   gap: 8px;
   min-width: 0;
+}
+
+.conversation-item-trailing {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.conversation-pending-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgba(142, 95, 74, 0.24);
+  border: 1px solid rgba(142, 95, 74, 0.42);
+  position: relative;
+  display: inline-block;
+}
+
+.conversation-pending-indicator::after {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: conversation-pending-pulse 1.15s ease-in-out infinite;
 }
 
 .conversation-delete {
@@ -575,8 +601,20 @@ h2 {
 .composer textarea {
   resize: none;
   min-height: 56px;
-  max-height: 112px;
+  max-height: 240px;
   overflow-y: auto;
+}
+
+@keyframes conversation-pending-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+    transform: scale(0.72);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .primary-button,

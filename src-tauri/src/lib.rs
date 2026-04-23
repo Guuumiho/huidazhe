@@ -112,8 +112,10 @@ struct SessionMemory {
 struct ConversationMapNode {
     id: i64,
     conversation_id: i64,
-    title: String,
+    label: String,
     node_type: String,
+    topic_type: String,
+    description: String,
     status: String,
     created_from_record_id: Option<i64>,
     created_at: i64,
@@ -266,40 +268,33 @@ struct ExistingKnowledgeNode {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ConversationMapUpdate {
-    #[serde(alias = "user_node_action")]
-    user_node_action: ConversationMapUserAction,
-    #[serde(default, alias = "assistant_nodes")]
-    assistant_nodes: Vec<ConversationMapAssistantNodeDraft>,
+struct ConversationMapExtraction {
+    #[serde(default, alias = "newNodes")]
+    new_nodes: Vec<ConversationMapDraftNode>,
+    #[serde(default, alias = "newEdges")]
+    new_edges: Vec<ConversationMapDraftEdge>,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ConversationMapUserAction {
+struct ConversationMapDraftNode {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    label: String,
     #[serde(default)]
     r#type: String,
-    #[serde(alias = "target_node_id")]
-    target_node_id: Option<i64>,
     #[serde(default)]
-    title: String,
-    #[serde(alias = "parent_node_id")]
-    parent_node_id: Option<i64>,
-    #[serde(default)]
-    #[serde(alias = "relation_type")]
-    relation_type: String,
+    description: String,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ConversationMapAssistantNodeDraft {
+struct ConversationMapDraftEdge {
     #[serde(default)]
-    title: String,
-    #[serde(alias = "parent_node_id")]
-    parent_node_id: Option<i64>,
+    sid: String,
     #[serde(default)]
-    #[serde(alias = "relation_type")]
-    relation_type: String,
+    tid: String,
+    #[serde(default)]
+    r#type: String,
 }
 
 #[derive(Debug, Serialize)]

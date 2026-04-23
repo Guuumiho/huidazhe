@@ -1,4 +1,4 @@
-import { bindChatEvents, loadConversations, loadRecords, renderConversations } from './chat.js';
+﻿import { bindChatEvents, loadConversations, loadRecords, renderConversations } from './chat.js';
 import { bindKnowledgeEvents, refreshKnowledgeView, renderKnowledgeMap, renderKnowledgeTodayToggle } from './knowledge.js';
 import { bindSettingsEvents, loadSettings } from './settings.js';
 import { loadConversationMap, renderThoughtMap } from './thought-map.js';

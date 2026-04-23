@@ -49,6 +49,12 @@ function removePendingRecord(conversationId, recordId) {
   );
 }
 
+function conversationHasPending(conversationId) {
+  return getPendingRecords(conversationId).some(
+    (record) => record.answer === 'Thinking...' && !record.errorMessage
+  );
+}
+
 function appendInlineFormatted(target, text) {
   const parts = text.split(/(\*\*[^*]+\*\*)/g);
   parts.forEach((part) => {
@@ -351,8 +357,19 @@ export function renderConversations() {
       event.stopPropagation();
       await removeConversation(conversation.id);
     });
+    const trailing = document.createElement('div');
+    trailing.className = 'conversation-item-trailing';
 
-    header.append(title, deleteButton);
+    if (conversationHasPending(conversation.id)) {
+      const pendingIcon = document.createElement('span');
+      pendingIcon.className = 'conversation-pending-indicator';
+      pendingIcon.title = '等待回复中';
+      pendingIcon.setAttribute('aria-label', '等待回复中');
+      trailing.appendChild(pendingIcon);
+    }
+
+    trailing.appendChild(deleteButton);
+    header.append(title, trailing);
 
     const meta = document.createElement('button');
     meta.type = 'button';
@@ -475,6 +492,7 @@ function buildPendingRecord(question, conversationId) {
 
 function renderPendingRecord(conversationId, record) {
   addPendingRecord(conversationId, record);
+  renderConversations();
   if (state.currentConversationId === conversationId) {
     state.records = [...state.records, record];
     renderRecords();
@@ -483,6 +501,7 @@ function renderPendingRecord(conversationId, record) {
 
 function replaceRenderedPendingRecord(conversationId, tempRecordId, nextRecord) {
   replacePendingRecord(conversationId, tempRecordId, nextRecord);
+  renderConversations();
   if (state.currentConversationId === conversationId) {
     state.records = state.records.map((record) =>
       record.id === tempRecordId ? nextRecord : record
@@ -493,6 +512,7 @@ function replaceRenderedPendingRecord(conversationId, tempRecordId, nextRecord) 
 
 function removeRenderedPendingRecord(conversationId, tempRecordId) {
   removePendingRecord(conversationId, tempRecordId);
+  renderConversations();
   if (state.currentConversationId === conversationId) {
     state.records = state.records.filter((record) => record.id !== tempRecordId);
     renderRecords();
