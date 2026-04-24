@@ -652,11 +652,29 @@ h2 {
 }
 
 .status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 6px 10px;
   border-radius: 999px;
   background: var(--warning-bg);
   color: var(--warning-text);
   font-size: 11px;
+}
+
+.model-toggle {
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid rgba(142, 95, 74, 0.35);
+  background: var(--success-bg);
+  color: var(--success-text);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.model-toggle:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(74, 48, 24, 0.08);
 }
 
 .thought-map-header {
@@ -764,6 +782,10 @@ h2 {
 .thought-map-empty {
   padding: 12px;
   font-size: 12px;
+  border: 1px solid rgba(183, 157, 132, 0.4);
+  border-radius: 16px;
+  background: rgba(255, 250, 243, 0.72);
+  line-height: 1.55;
 }
 
 .thought-map-stage {
@@ -797,6 +819,24 @@ h2 {
   font-size: 12px;
   line-height: 1.5;
   color: var(--text);
+}
+
+.thought-map-placeholder-card {
+  display: grid;
+  gap: 8px;
+}
+
+.thought-map-placeholder-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.thought-map-placeholder-text {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
 }
 
 .thought-map-node {

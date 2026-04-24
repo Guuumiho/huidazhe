@@ -1,5 +1,4 @@
 import { state } from './state.js';
-import { loadConversationMap, scheduleConversationMapRefresh } from './thought-map.js';
 import { loadKnowledgeStatus } from './knowledge.js';
 import { collectSettings, saveSettings } from './settings.js';
 import {
@@ -11,7 +10,7 @@ import {
   renderConversationDeleteToggle,
   resetQuestionInputHeight,
   resizeQuestionInput,
-  setConfigStatus,
+  setAskModel,
   setFormMessage,
   setMemoryMode,
   showConversationModeModal,
@@ -429,7 +428,6 @@ export async function switchConversation(conversationId) {
   setMemoryMode(currentConversation?.mode || 'single');
   renderConversations();
   await loadRecords();
-  await loadConversationMap();
   await saveSettings(false);
 }
 
@@ -442,7 +440,6 @@ async function createConversation(mode) {
   setMemoryMode(conversation.mode);
   renderConversations();
   renderRecords();
-  await loadConversationMap();
   setFormMessage('');
   hideConversationModeModal();
   await saveSettings(false);
@@ -463,7 +460,6 @@ async function removeConversation(conversationId) {
   setMemoryMode(currentConversation?.mode || 'single');
   renderConversations();
   await loadRecords();
-  await loadConversationMap();
   await saveSettings(false);
 }
 
@@ -541,7 +537,6 @@ async function submitQuestion(draftQuestion, activeConversationId) {
   }
 
   if (!settings.apiUrl || !settings.apiKey) {
-    setConfigStatus(false, 'API not set');
     setFormMessage('请先保存 API URL 和 API Key。', 'error');
     els.settingsPanel.classList.remove('hidden');
     return;
@@ -571,7 +566,6 @@ async function submitQuestion(draftQuestion, activeConversationId) {
     if (result.ok && result.record) {
       removeRenderedPendingRecord(activeConversationId, tempRecord.id);
       await loadRecords();
-      scheduleConversationMapRefresh();
       setFormMessage('');
       await loadConversations();
       loadKnowledgeStatus().catch(() => {});
@@ -622,6 +616,16 @@ export function bindChatEvents() {
 
   els.cancelCreateConversation?.addEventListener('click', () => {
     hideConversationModeModal();
+  });
+
+  els.modelToggle?.addEventListener('click', async () => {
+    const nextModel = state.askModel === 'gpt-5.5' ? 'gpt-5.4' : 'gpt-5.5';
+    setAskModel(nextModel);
+    try {
+      await saveSettings(false);
+    } catch (error) {
+      setFormMessage(String(error), 'error');
+    }
   });
 
   els.questionInput.addEventListener('input', () => {

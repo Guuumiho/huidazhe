@@ -1,11 +1,12 @@
 ﻿import { bindChatEvents, loadConversations, loadRecords, renderConversations } from './chat.js';
 import { bindKnowledgeEvents, refreshKnowledgeView, renderKnowledgeMap, renderKnowledgeTodayToggle } from './knowledge.js';
 import { bindSettingsEvents, loadSettings } from './settings.js';
-import { loadConversationMap, renderThoughtMap } from './thought-map.js';
-import { ensureTauri, els, renderConversationDeleteToggle, renderMemoryMode, renderView, setConfigStatus, setFormMessage } from './ui.js';
+import { renderThoughtMap } from './thought-map.js';
+import { ensureTauri, els, renderAskModel, renderConversationDeleteToggle, renderMemoryMode, renderView, setFormMessage } from './ui.js';
 
 async function bootstrap() {
   ensureTauri();
+  renderAskModel();
   renderConversationDeleteToggle();
   renderMemoryMode();
   renderKnowledgeTodayToggle();
@@ -14,7 +15,6 @@ async function bootstrap() {
   try {
     await loadSettings();
   } catch (error) {
-    setConfigStatus(false, 'Settings load failed');
     setFormMessage(`Settings warning: ${String(error)}`, 'error');
   }
 
@@ -22,7 +22,7 @@ async function bootstrap() {
     await loadConversations();
     renderConversations();
     await loadRecords();
-    await loadConversationMap();
+    renderThoughtMap();
   } catch (error) {
     setFormMessage(`History load failed: ${String(error)}`, 'error');
   }

@@ -65,6 +65,7 @@ export const state = {
   conversations: [],
   currentConversationId: null,
   lastConversationId: null,
+  askModel: 'gpt-5.4',
   conversationDeleteMode: false,
   records: [],
   pendingRecordsByConversation: new Map(),

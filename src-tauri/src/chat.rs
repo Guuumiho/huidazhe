@@ -244,7 +244,10 @@ pub(crate) async fn ask(
         return Err("Please fill in and save API URL and API Key first.".to_string());
     }
 
-    let model = ASK_MODEL.to_string();
+    let model = match settings.model.as_str() {
+        "gpt-5.4" | "gpt-5.5" => settings.model.clone(),
+        _ => ASK_MODEL.to_string(),
+    };
     let created_at = Utc::now().timestamp_millis();
     let use_memory = use_short_term_memory.unwrap_or(false);
     let prompt_mode = if use_memory { "memory" } else { "single" };
@@ -348,11 +351,6 @@ pub(crate) async fn ask(
     if use_memory {
         let _ = refresh_session_memory(&app, &settings, conversation_id, &trimmed_question, &answer).await;
     }
-
-    let map_app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let _ = crate::knowledge::refresh_conversation_map_internal(map_app, conversation_id, record_id).await;
-    });
 
     Ok(AskResponse {
         ok: true,

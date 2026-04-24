@@ -1,10 +1,11 @@
 import { THEME_PRESETS, state } from './state.js';
-import { els, invoke, setConfigStatus, setFormMessage } from './ui.js';
+import { els, invoke, setAskModel, setFormMessage } from './ui.js';
 
 export function collectSettings() {
   return {
     apiUrl: els.apiUrl.value.trim(),
     apiKey: els.apiKey.value.trim(),
+    model: state.askModel,
     theme: els.themeSelect.value,
     lastConversationId: state.currentConversationId,
   };
@@ -37,15 +38,10 @@ export function applyTheme(themeKey) {
 export function applySettings(settings) {
   els.apiUrl.value = settings.apiUrl || '';
   els.apiKey.value = settings.apiKey || '';
+  setAskModel(settings.model || 'gpt-5.4');
   els.themeSelect.value = THEME_PRESETS[settings.theme] ? settings.theme : 'default-theme';
   state.lastConversationId = settings.lastConversationId ?? null;
   applyTheme(els.themeSelect.value);
-
-  if (settings.apiUrl && settings.apiKey) {
-    setConfigStatus(true, 'API ready');
-  } else {
-    setConfigStatus(false, 'API not set');
-  }
 }
 
 export async function loadSettings() {

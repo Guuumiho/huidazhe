@@ -16,7 +16,7 @@ export const els = {
   askForm: document.querySelector('#ask-form'),
   askButton: document.querySelector('#ask-button'),
   questionInput: document.querySelector('#question-input'),
-  configStatus: document.querySelector('#config-status'),
+  modelToggle: document.querySelector('#model-toggle'),
   formMessage: document.querySelector('#form-message'),
   chatList: document.querySelector('#chat-list'),
   emptyState: document.querySelector('#empty-state'),
@@ -59,9 +59,12 @@ export function setFormMessage(message, kind = '') {
   els.formMessage.className = `form-message${kind ? ` ${kind}` : ''}`;
 }
 
-export function setConfigStatus(isReady, message) {
-  els.configStatus.textContent = message;
-  els.configStatus.className = `status-pill${isReady ? ' ready' : ' error'}`;
+export function renderAskModel() {
+  if (!els.modelToggle) {
+    return;
+  }
+
+  els.modelToggle.textContent = state.askModel === 'gpt-5.5' ? 'gpt-5.5' : 'gpt-5.4';
 }
 
 export function formatTime(timestamp) {
@@ -127,6 +130,11 @@ export function renderMemoryMode() {
 export function setMemoryMode(mode) {
   state.memoryMode = mode === 'memory' ? 'memory' : 'single';
   renderMemoryMode();
+}
+
+export function setAskModel(model) {
+  state.askModel = model === 'gpt-5.5' ? 'gpt-5.5' : 'gpt-5.4';
+  renderAskModel();
 }
 
 export function showConversationModeModal() {
