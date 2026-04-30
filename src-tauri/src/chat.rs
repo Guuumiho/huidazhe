@@ -307,7 +307,10 @@ pub(crate) async fn ask(
                         AUXILIARY_MODEL.to_string(),
                         result.raw_body,
                         result.answer,
-                        Some("gpt-5.4请求失败，此问题切换成gpt-5.4-mini".to_string()),
+                        Some(format!(
+                            "{}请求失败，此问题切换成{}",
+                            model, AUXILIARY_MODEL
+                        )),
                     ),
                     Err(_) => {
                         return Ok(AskResponse {

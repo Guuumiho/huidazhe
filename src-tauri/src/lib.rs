@@ -1,8 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fs,
-    path::PathBuf,
-};
+use std::{fs, path::PathBuf};
 
 use chrono::Utc;
 use reqwest::Client;
@@ -17,14 +13,10 @@ mod storage;
 
 const ASK_MODEL: &str = "gpt-5.4";
 const AUXILIARY_MODEL: &str = "gpt-5.4-mini";
-const KNOWLEDGE_MODEL: &str = AUXILIARY_MODEL;
 const DEFAULT_THEME: &str = "default-theme";
 const SETTINGS_FILE_NAME: &str = "settings.json";
 const DB_FILE_NAME: &str = "qa_records.db";
 const MODEL_CALL_LOG_FILE_NAME: &str = "model_calls.jsonl";
-const KNOWLEDGE_TASK_NAME: &str = "knowledge_map";
-const KNOWLEDGE_CHECK_INTERVAL_MS: i64 = 60 * 60 * 1000;
-const KNOWLEDGE_BATCH_LIMIT: usize = 40;
 const SHORT_TERM_MEMORY_ROUNDS: usize = 6;
 const SESSION_MEMORY_RECENT_ROUNDS: usize = 3;
 const SESSION_MEMORY_MAX_TEXT_CHARS: usize = 1200;
@@ -230,6 +222,11 @@ struct ModelCallLogEntry {
     error: Option<String>,
 }
 
+/*
+V1 knowledge map / conversation map implementation is disabled while thought-chain V2
+is redesigned. Keep this old data-shaping block here as a reference only; uncomment it
+only if the old V1 backend is intentionally restored.
+
 #[derive(Debug)]
 struct KnowledgeTaskStateRow {
     last_run_at: Option<i64>,
@@ -255,7 +252,7 @@ struct ClusterRecord {
 #[derive(Debug, Clone)]
 struct KnowledgeCluster {
     records: Vec<ClusterRecord>,
-    terms: HashSet<String>,
+    terms: std::collections::HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -264,7 +261,7 @@ struct ExistingKnowledgeNode {
     title: String,
     normalized_title: String,
     aliases: Vec<String>,
-    terms: HashSet<String>,
+    terms: std::collections::HashSet<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -296,6 +293,7 @@ struct ConversationMapDraftEdge {
     #[serde(default)]
     r#type: String,
 }
+*/
 
 #[derive(Debug, Serialize)]
 struct ChatCompletionRequest<'a> {
@@ -352,6 +350,10 @@ struct ResponseContentItem {
     text: Option<String>,
 }
 
+/*
+Old knowledge extraction response shape. V1 knowledge organization is disabled; keep
+this as reference only until thought-chain V2 defines its own schema.
+
 #[derive(Debug, Deserialize)]
 struct KnowledgeExtraction {
     #[serde(
@@ -381,6 +383,7 @@ struct KnowledgeExtraction {
     #[serde(default, alias = "confusableNodes", alias = "confusable_nodes")]
     confusable_nodes: Vec<String>,
 }
+*/
 
 #[derive(Debug)]
 enum ApiKind {
