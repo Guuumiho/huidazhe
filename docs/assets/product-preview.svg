@@ -1,0 +1,63 @@
+<svg width="1200" height="720" viewBox="0 0 1200 720" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">回答者产品界面预览</title>
+  <desc id="desc">三栏桌面界面预览：左侧对话窗口，中间问答区，右侧思维地图占位。</desc>
+  <rect width="1200" height="720" rx="36" fill="#F7F1E8"/>
+  <circle cx="120" cy="120" r="180" fill="#F0D8CB" opacity="0.45"/>
+  <circle cx="1020" cy="650" r="240" fill="#ECE4D8" opacity="0.75"/>
+
+  <rect x="58" y="58" width="245" height="604" rx="24" fill="#FFFDF8" stroke="#D9C8BA"/>
+  <rect x="88" y="88" width="154" height="46" rx="23" fill="#9A674F"/>
+  <text x="165" y="117" text-anchor="middle" font-size="17" font-weight="700" fill="#FFF8F2">新增对话窗口</text>
+  <circle cx="262" cy="111" r="23" fill="#FFF7F0" stroke="#D9C8BA"/>
+  <text x="262" y="118" text-anchor="middle" font-size="18" fill="#9A674F">×</text>
+
+  <g>
+    <rect x="88" y="162" width="185" height="70" rx="16" fill="#FFF7F0" stroke="#D9C8BA"/>
+    <text x="108" y="193" font-size="19" font-weight="700" fill="#3F352F">项目打包问题</text>
+    <text x="108" y="216" font-size="13" fill="#8B786B">记忆 · 04/21 18:52</text>
+  </g>
+  <g>
+    <rect x="88" y="248" width="185" height="70" rx="16" fill="#FFFDF8" stroke="#D9C8BA"/>
+    <text x="108" y="279" font-size="19" font-weight="700" fill="#3F352F">OpenClaw 学习</text>
+    <text x="108" y="302" font-size="13" fill="#8B786B">记忆 · 04/20 16:41</text>
+  </g>
+  <g>
+    <rect x="88" y="334" width="185" height="70" rx="16" fill="#FFFDF8" stroke="#D9C8BA"/>
+    <text x="108" y="365" font-size="19" font-weight="700" fill="#3F352F">链接测试</text>
+    <text x="108" y="388" font-size="13" fill="#8B786B">单点 · 04/19 18:45</text>
+  </g>
+  <rect x="88" y="590" width="82" height="40" rx="20" fill="#FFF7F0" stroke="#D9C8BA"/>
+  <text x="129" y="615" text-anchor="middle" font-size="16" fill="#6D5648">设置</text>
+
+  <rect x="335" y="58" width="560" height="604" rx="24" fill="#FFFDF8" stroke="#D9C8BA"/>
+  <rect x="365" y="88" width="500" height="408" rx="18" fill="#FBF6EF" stroke="#E2D4C8"/>
+  <text x="390" y="124" font-size="12" letter-spacing="3" fill="#9B8B7E">CHAT</text>
+
+  <rect x="390" y="150" width="430" height="58" rx="18" fill="#C2B4A5"/>
+  <text x="414" y="186" font-size="17" fill="#4A403A">如何把项目打包成 exe？</text>
+
+  <text x="390" y="244" font-size="12" letter-spacing="2" fill="#9B8B7E">ASSISTANT</text>
+  <rect x="390" y="264" width="440" height="142" rx="18" fill="#F4EDE3"/>
+  <text x="414" y="300" font-size="18" font-weight="700" fill="#5E5668">核心结论</text>
+  <text x="414" y="334" font-size="16" fill="#4F4A57">先用 build-exe.cmd，一键生成桌面程序。</text>
+  <text x="414" y="364" font-size="16" fill="#4F4A57">如果打包失败，再检查 Rust、Tauri 和系统依赖。</text>
+  <text x="414" y="390" font-size="13" fill="#9B8B7E">04/21 18:56 · gpt-5.4</text>
+
+  <rect x="365" y="514" width="500" height="118" rx="18" fill="#FFFDF8" stroke="#E2D4C8"/>
+  <rect x="388" y="538" width="360" height="52" rx="14" fill="#FFFBF5" stroke="#D9C8BA"/>
+  <text x="410" y="571" font-size="15" fill="#8B786B">输入一个需要参考前文聊天内容的问题...</text>
+  <rect x="772" y="540" width="68" height="48" rx="24" fill="#9A674F"/>
+  <text x="806" y="570" text-anchor="middle" font-size="17" font-weight="700" fill="#FFF8F2">发送</text>
+  <rect x="388" y="598" width="74" height="28" rx="14" fill="#E7F5EA"/>
+  <text x="425" y="617" text-anchor="middle" font-size="13" fill="#1F6B37">gpt-5.4</text>
+
+  <rect x="925" y="58" width="217" height="604" rx="24" fill="#FFFDF8" stroke="#D9C8BA"/>
+  <text x="955" y="96" font-size="12" letter-spacing="3" fill="#9B8B7E">THOUGHT MAP</text>
+  <text x="955" y="128" font-size="23" font-weight="700" fill="#3F352F">思维地图</text>
+  <rect x="955" y="156" width="156" height="46" rx="23" fill="#FFF7F0" stroke="#D9C8BA"/>
+  <text x="1033" y="185" text-anchor="middle" font-size="17" fill="#6D5648">知识地图</text>
+  <line x1="955" y1="230" x2="1112" y2="230" stroke="#D9C8BA"/>
+  <rect x="955" y="260" width="156" height="120" rx="16" fill="#FBF6EF" stroke="#E2D4C8" stroke-dasharray="4 4"/>
+  <text x="1033" y="312" text-anchor="middle" font-size="15" fill="#7D6B5F">功能迭代中</text>
+  <text x="1033" y="338" text-anchor="middle" font-size="14" fill="#9B8B7E">当前仅保留占位</text>
+</svg>

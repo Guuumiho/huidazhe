@@ -269,6 +269,69 @@ function createRawResponseSection(record) {
   return wrapper;
 }
 
+function closeNoteSearchModal() {
+  els.noteSearchModal?.classList.add('hidden');
+}
+
+function showNoteSearchModal(result) {
+  if (!els.noteSearchModal || !els.noteSearchBody || !els.noteSearchTitle) {
+    return;
+  }
+
+  els.noteSearchTitle.textContent = result.query
+    ? `笔记搜索：${result.query}`
+    : '笔记搜索结果';
+  els.noteSearchBody.innerHTML = '';
+
+  const summary = document.createElement('div');
+  summary.className = 'note-search-summary';
+  summary.textContent = result.message || '搜索完成。';
+  els.noteSearchBody.appendChild(summary);
+
+  if (!result.matches?.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.textContent = '没有找到相关笔记。';
+    els.noteSearchBody.appendChild(empty);
+  } else {
+    result.matches.forEach((match) => {
+      const item = document.createElement('article');
+      item.className = 'note-search-item';
+
+      const content = document.createElement('div');
+      content.className = 'note-search-content';
+      content.textContent = match.content;
+
+      const source = document.createElement('div');
+      source.className = 'note-search-source';
+      source.textContent = `${formatTime(match.createdAt)} · 来源问题：${match.sourceQuestion}`;
+
+      item.append(content, source);
+      els.noteSearchBody.appendChild(item);
+    });
+  }
+
+  els.noteSearchModal.classList.remove('hidden');
+}
+
+function handleLocalToolResults(toolResults = []) {
+  if (!toolResults.length) {
+    return;
+  }
+
+  const noteResults = toolResults.filter((result) => result.tool === 'note');
+  const searchResults = toolResults.filter((result) => result.tool === 'search');
+
+  if (noteResults.length) {
+    const latestNote = noteResults[noteResults.length - 1];
+    setFormMessage(latestNote.message, latestNote.ok ? 'success' : 'error');
+  }
+
+  if (searchResults.length) {
+    showNoteSearchModal(searchResults[searchResults.length - 1]);
+  }
+}
+
 export function renderRecords() {
   els.chatList.innerHTML = '';
   els.emptyState.hidden = state.records.length > 0;
@@ -567,6 +630,7 @@ async function submitQuestion(draftQuestion, activeConversationId) {
       removeRenderedPendingRecord(activeConversationId, tempRecord.id);
       await loadRecords();
       setFormMessage('');
+      handleLocalToolResults(result.toolResults);
       await loadConversations();
       loadKnowledgeStatus().catch(() => {});
       return;
@@ -633,5 +697,6 @@ export function bindChatEvents() {
   });
 
   els.askForm.addEventListener('submit', askQuestion);
+  els.closeNoteSearch?.addEventListener('click', closeNoteSearchModal);
   resizeQuestionInput();
 }

@@ -769,6 +769,76 @@ h2 {
   justify-content: flex-end;
 }
 
+.note-search-modal {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 50;
+  width: min(420px, calc(100vw - 44px));
+}
+
+.note-search-modal.hidden {
+  display: none;
+}
+
+.note-search-card {
+  border: 1px solid rgba(183, 157, 132, 0.45);
+  border-radius: 20px;
+  background: rgba(255, 250, 244, 0.98);
+  box-shadow: 0 18px 50px rgba(69, 51, 38, 0.18);
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.note-search-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.note-search-close {
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.note-search-body {
+  display: grid;
+  gap: 10px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.note-search-summary {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.note-search-item {
+  border: 1px solid rgba(183, 157, 132, 0.35);
+  border-radius: 14px;
+  background: rgba(255, 253, 248, 0.92);
+  padding: 10px 12px;
+}
+
+.note-search-content {
+  color: var(--text);
+  line-height: 1.55;
+}
+
+.note-search-source {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .knowledge-status {
   margin-top: 10px;
 }

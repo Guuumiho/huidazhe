@@ -1,5 +1,9 @@
 use super::*;
+use std::io::Write;
 use std::time::Instant;
+
+const LOCAL_TOOL_START: &str = "[LOCAL_TOOL_CALLS]";
+const LOCAL_TOOL_END: &str = "[/LOCAL_TOOL_CALLS]";
 
 #[tauri::command]
 pub(crate) fn list_conversations(app: AppHandle) -> Result<Vec<ConversationSummary>, String> {
@@ -279,8 +283,8 @@ pub(crate) async fn ask(
     )
     .await;
 
-    let (final_model, raw_body, answer, fallback_notice) = match primary_attempt {
-        Ok(result) => (model.clone(), result.raw_body, result.answer, None),
+    let (final_model, raw_body, answer, tool_calls, fallback_notice) = match primary_attempt {
+        Ok(result) => (model.clone(), result.raw_body, result.answer, result.tool_calls, None),
         Err(_) => {
             match execute_chat_attempt(
                 &app,
@@ -292,7 +296,7 @@ pub(crate) async fn ask(
             )
             .await
             {
-                Ok(result) => (model.clone(), result.raw_body, result.answer, None),
+                Ok(result) => (model.clone(), result.raw_body, result.answer, result.tool_calls, None),
                 Err(_) => match execute_chat_attempt(
                     &app,
                     &settings,
@@ -307,6 +311,7 @@ pub(crate) async fn ask(
                         AUXILIARY_MODEL.to_string(),
                         result.raw_body,
                         result.answer,
+                        result.tool_calls,
                         Some(format!(
                             "{}请求失败，此问题切换成{}",
                             model, AUXILIARY_MODEL
@@ -318,6 +323,7 @@ pub(crate) async fn ask(
                             record: None,
                             failure_message: Some("大模型api暂不可用，稍后重试".to_string()),
                             retry_available: true,
+                            tool_results: Vec::new(),
                         });
                     }
                 },
@@ -326,6 +332,22 @@ pub(crate) async fn ask(
     };
 
     let latency_ms = timer.elapsed().as_millis() as i64;
+    let tool_extraction = extract_local_tool_calls(&answer);
+    let answer = tool_extraction.visible_answer;
+    let mut local_tool_calls = tool_calls;
+    local_tool_calls.extend(tool_extraction.calls);
+    let answer = if answer.trim().is_empty() && !local_tool_calls.is_empty() {
+        "已处理。".to_string()
+    } else {
+        answer
+    };
+    let tool_results = execute_local_tool_calls(
+        &app,
+        &local_tool_calls,
+        &trimmed_question,
+        &answer,
+        created_at,
+    );
 
     let record_id = insert_record(
         &app,
@@ -373,6 +395,7 @@ pub(crate) async fn ask(
         }),
         failure_message: None,
         retry_available: false,
+        tool_results,
     })
 }
 
@@ -408,7 +431,17 @@ pub(crate) async fn send_model_text_request(
                 content: user_prompt,
             });
 
-            let payload = ChatCompletionRequest { model, messages };
+            let enable_local_tools = purpose == "chat_answer";
+            let payload = ChatCompletionRequest {
+                model,
+                messages,
+                tools: if enable_local_tools {
+                    Some(local_tool_definitions())
+                } else {
+                    None
+                },
+                tool_choice: if enable_local_tools { Some("auto") } else { None },
+            };
             let request_body =
                 serde_json::to_value(&payload).map_err(|error| format!("Failed to serialize request body: {error}"))?;
             let response = client
@@ -518,6 +551,40 @@ pub(crate) async fn send_model_text_request(
 struct ChatAttemptResult {
     raw_body: String,
     answer: String,
+    tool_calls: Vec<LocalToolCall>,
+}
+
+struct LocalToolExtraction {
+    visible_answer: String,
+    calls: Vec<LocalToolCall>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocalToolCalls {
+    #[serde(default)]
+    calls: Vec<LocalToolCall>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocalToolCall {
+    tool: String,
+    content: Option<String>,
+    query: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+struct NoteStore {
+    notes: Vec<NoteEntry>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct NoteEntry {
+    id: String,
+    content: String,
+    created_at: i64,
+    source_question: String,
+    source_answer: String,
 }
 
 async fn execute_chat_attempt(
@@ -539,10 +606,322 @@ async fn execute_chat_attempt(
     )
     .await?;
 
-    let answer = parse_model_text(&settings.api_url, &raw_body)
+    let (answer, tool_calls) = parse_model_answer_with_tools(&settings.api_url, &raw_body)
         .map_err(|error| format!("Failed to parse model response: {error}"))?;
 
-    Ok(ChatAttemptResult { raw_body, answer })
+    Ok(ChatAttemptResult {
+        raw_body,
+        answer,
+        tool_calls,
+    })
+}
+
+fn local_tool_definitions() -> Vec<ChatToolDefinition> {
+    vec![
+        ChatToolDefinition {
+            r#type: "function".to_string(),
+            function: ChatToolFunctionDefinition {
+                name: "save_note".to_string(),
+                description: "保存一条本地笔记。".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "content": {
+                            "type": "string",
+                            "description": "要保存的笔记内容"
+                        }
+                    },
+                    "required": ["content"]
+                }),
+            },
+        },
+        ChatToolDefinition {
+            r#type: "function".to_string(),
+            function: ChatToolFunctionDefinition {
+                name: "search_note".to_string(),
+                description: "从本地笔记中搜索信息。".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "要搜索的关键词或问题"
+                        }
+                    },
+                    "required": ["query"]
+                }),
+            },
+        },
+    ]
+}
+
+fn parse_model_answer_with_tools(api_url: &str, raw_body: &str) -> Result<(String, Vec<LocalToolCall>), String> {
+    match normalize_api_url(api_url).1 {
+        ApiKind::ChatCompletions => parse_chat_completion_answer_with_tools(raw_body),
+        ApiKind::Responses => parse_responses_text(raw_body).map(|answer| (answer, Vec::new())),
+    }
+}
+
+fn parse_chat_completion_answer_with_tools(raw_body: &str) -> Result<(String, Vec<LocalToolCall>), String> {
+    let parsed: ChatCompletionResponse =
+        serde_json::from_str(raw_body).map_err(|error| error.to_string())?;
+
+    let first = parsed
+        .choices
+        .into_iter()
+        .next()
+        .ok_or_else(|| "No choices returned by the API.".to_string())?;
+
+    let answer = match extract_content_value(first.message.content) {
+        Ok(text) => text,
+        Err(_) => String::new(),
+    };
+    let tool_calls = first
+        .message
+        .tool_calls
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(native_tool_call_to_local)
+        .collect::<Vec<_>>();
+
+    if answer.trim().is_empty() && tool_calls.is_empty() {
+        return Err("Could not extract text or tool calls from the message content.".to_string());
+    }
+
+    Ok((answer, tool_calls))
+}
+
+fn native_tool_call_to_local(call: ChatCompletionToolCall) -> Option<LocalToolCall> {
+    if call.r#type != "function" {
+        return None;
+    }
+
+    let name = call.function.name.trim();
+    let arguments: serde_json::Value = serde_json::from_str(&call.function.arguments).ok()?;
+    match name {
+        "save_note" | "note" => Some(LocalToolCall {
+            tool: "note".to_string(),
+            content: arguments
+                .get("content")
+                .and_then(|value| value.as_str())
+                .map(|value| value.to_string()),
+            query: None,
+        }),
+        "search_note" | "search_notes" | "search" => Some(LocalToolCall {
+            tool: "search".to_string(),
+            content: None,
+            query: arguments
+                .get("query")
+                .and_then(|value| value.as_str())
+                .map(|value| value.to_string()),
+        }),
+        _ => None,
+    }
+}
+
+fn extract_local_tool_calls(answer: &str) -> LocalToolExtraction {
+    let Some(start) = answer.find(LOCAL_TOOL_START) else {
+        return LocalToolExtraction {
+            visible_answer: answer.trim().to_string(),
+            calls: Vec::new(),
+        };
+    };
+
+    let after_start = start + LOCAL_TOOL_START.len();
+    let visible_answer = answer[..start].trim().to_string();
+    let Some(relative_end) = answer[after_start..].find(LOCAL_TOOL_END) else {
+        return LocalToolExtraction {
+            visible_answer,
+            calls: Vec::new(),
+        };
+    };
+
+    let end = after_start + relative_end;
+    let raw_json = answer[after_start..end].trim();
+    let calls = serde_json::from_str::<LocalToolCalls>(raw_json)
+        .map(|payload| payload.calls)
+        .unwrap_or_default();
+
+    LocalToolExtraction {
+        visible_answer,
+        calls,
+    }
+}
+
+fn execute_local_tool_calls(
+    app: &AppHandle,
+    calls: &[LocalToolCall],
+    source_question: &str,
+    source_answer: &str,
+    created_at: i64,
+) -> Vec<LocalToolResult> {
+    calls
+        .iter()
+        .map(|call| match call.tool.trim().to_ascii_lowercase().as_str() {
+            "note" => execute_note_tool(app, call, source_question, source_answer, created_at),
+            "search" => execute_search_tool(app, call),
+            other => LocalToolResult {
+                tool: other.to_string(),
+                ok: false,
+                message: "未知本地工具，已忽略。".to_string(),
+                query: None,
+                matches: Vec::new(),
+            },
+        })
+        .collect()
+}
+
+fn execute_note_tool(
+    app: &AppHandle,
+    call: &LocalToolCall,
+    source_question: &str,
+    source_answer: &str,
+    created_at: i64,
+) -> LocalToolResult {
+    let content = call.content.as_deref().unwrap_or("").trim();
+    if content.is_empty() {
+        return LocalToolResult {
+            tool: "note".to_string(),
+            ok: false,
+            message: "笔记内容为空，未写入。".to_string(),
+            query: None,
+            matches: Vec::new(),
+        };
+    }
+
+    match append_note(app, content, source_question, source_answer, created_at) {
+        Ok(note_id) => LocalToolResult {
+            tool: "note".to_string(),
+            ok: true,
+            message: format!("已保存到本地笔记：{note_id}"),
+            query: None,
+            matches: Vec::new(),
+        },
+        Err(error) => LocalToolResult {
+            tool: "note".to_string(),
+            ok: false,
+            message: format!("笔记写入失败：{error}"),
+            query: None,
+            matches: Vec::new(),
+        },
+    }
+}
+
+fn execute_search_tool(app: &AppHandle, call: &LocalToolCall) -> LocalToolResult {
+    let query = call.query.as_deref().unwrap_or("").trim();
+    if query.is_empty() {
+        return LocalToolResult {
+            tool: "search".to_string(),
+            ok: false,
+            message: "搜索关键词为空。".to_string(),
+            query: Some(String::new()),
+            matches: Vec::new(),
+        };
+    }
+
+    match search_notes(app, query) {
+        Ok(matches) => {
+            let message = if matches.is_empty() {
+                "没有找到相关笔记。".to_string()
+            } else {
+                format!("找到 {} 条相关笔记。", matches.len())
+            };
+            LocalToolResult {
+                tool: "search".to_string(),
+                ok: true,
+                message,
+                query: Some(query.to_string()),
+                matches,
+            }
+        }
+        Err(error) => LocalToolResult {
+            tool: "search".to_string(),
+            ok: false,
+            message: format!("笔记搜索失败：{error}"),
+            query: Some(query.to_string()),
+            matches: Vec::new(),
+        },
+    }
+}
+
+fn load_note_store(app: &AppHandle) -> Result<NoteStore, String> {
+    let path = crate::storage::note_path(app)?;
+    if !path.exists() {
+        return Ok(NoteStore::default());
+    }
+
+    let raw = fs::read_to_string(path).map_err(|error| format!("Failed to read note file: {error}"))?;
+    if raw.trim().is_empty() {
+        return Ok(NoteStore::default());
+    }
+
+    serde_json::from_str(&raw).map_err(|error| format!("Failed to parse note file: {error}"))
+}
+
+fn save_note_store(app: &AppHandle, store: &NoteStore) -> Result<(), String> {
+    let path = crate::storage::note_path(app)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("Failed to create note directory: {error}"))?;
+    }
+
+    let content = serde_json::to_string_pretty(store)
+        .map_err(|error| format!("Failed to serialize note file: {error}"))?;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(path)
+        .map_err(|error| format!("Failed to open note file: {error}"))?;
+    file.write_all(content.as_bytes())
+        .map_err(|error| format!("Failed to write note file: {error}"))?;
+    Ok(())
+}
+
+fn append_note(
+    app: &AppHandle,
+    content: &str,
+    source_question: &str,
+    source_answer: &str,
+    created_at: i64,
+) -> Result<String, String> {
+    let mut store = load_note_store(app)?;
+    let note_id = format!("note_{}_{}", created_at, store.notes.len() + 1);
+    store.notes.push(NoteEntry {
+        id: note_id.clone(),
+        content: content.to_string(),
+        created_at,
+        source_question: source_question.to_string(),
+        source_answer: source_answer.to_string(),
+    });
+    save_note_store(app, &store)?;
+    Ok(note_id)
+}
+
+fn search_notes(app: &AppHandle, query: &str) -> Result<Vec<NoteSearchMatch>, String> {
+    let store = load_note_store(app)?;
+    let normalized_query = query.to_lowercase();
+    let mut matches = store
+        .notes
+        .into_iter()
+        .filter(|note| {
+            let haystack = format!(
+                "{}\n{}\n{}",
+                note.content, note.source_question, note.source_answer
+            )
+            .to_lowercase();
+            haystack.contains(&normalized_query)
+        })
+        .map(|note| NoteSearchMatch {
+            id: note.id,
+            content: note.content,
+            created_at: note.created_at,
+            source_question: note.source_question,
+        })
+        .collect::<Vec<_>>();
+
+    matches.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+    matches.truncate(8);
+    Ok(matches)
 }
 
 fn build_responses_input(
@@ -573,7 +952,22 @@ fn build_responses_input(
 }
 
 fn build_chat_system_prompt() -> String {
-    ASK_SYSTEM_PROMPT.to_string()
+    format!(
+        "{}\n\n{}",
+        ASK_SYSTEM_PROMPT,
+        "本地工具能力：\n\
+1. save_note：当用户明确表达“帮我记一下 / 记住 / 记录一下 / 加到笔记”等意思时使用，把需要保存的内容写入本地笔记。\n\
+2. search_note：当用户明确表达“去笔记里找 / 查一下笔记 / 我之前记过什么 / 从笔记中寻找”等意思时使用，搜索本地笔记。\n\
+\n\
+工具调用规则：\n\
+- 如果当前接口提供原生 tools，请优先使用原生工具调用，不要把工具参数写进正文。\n\
+- 工具调用后，正文只保留给用户看的自然语言说明。\n\
+- 如果接口不支持原生 tools，但确实需要调用工具，才在回答末尾追加一个 fallback 工具块：\n\
+[LOCAL_TOOL_CALLS]\n\
+{\"calls\":[{\"tool\":\"note\",\"content\":\"需要保存的笔记内容\"},{\"tool\":\"search\",\"query\":\"需要搜索的关键词\"}]}\n\
+[/LOCAL_TOOL_CALLS]\n\
+- 不需要工具时不要输出工具块。"
+    )
 }
 
 fn build_chat_user_prompt(question: &str, session_memory: Option<&SessionMemory>) -> String {

@@ -43,6 +43,10 @@ export const els = {
   createSingleConversation: document.querySelector('#create-single-conversation'),
   createMemoryConversation: document.querySelector('#create-memory-conversation'),
   cancelCreateConversation: document.querySelector('#cancel-create-conversation'),
+  noteSearchModal: document.querySelector('#note-search-modal'),
+  noteSearchTitle: document.querySelector('#note-search-title'),
+  noteSearchBody: document.querySelector('#note-search-body'),
+  closeNoteSearch: document.querySelector('#close-note-search'),
 };
 
 const QUESTION_INPUT_BASE_HEIGHT = 56;

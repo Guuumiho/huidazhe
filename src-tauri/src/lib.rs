@@ -17,6 +17,7 @@ const DEFAULT_THEME: &str = "default-theme";
 const SETTINGS_FILE_NAME: &str = "settings.json";
 const DB_FILE_NAME: &str = "qa_records.db";
 const MODEL_CALL_LOG_FILE_NAME: &str = "model_calls.jsonl";
+const NOTE_FILE_NAME: &str = "note.json";
 const SHORT_TERM_MEMORY_ROUNDS: usize = 6;
 const SESSION_MEMORY_RECENT_ROUNDS: usize = 3;
 const SESSION_MEMORY_MAX_TEXT_CHARS: usize = 1200;
@@ -74,6 +75,26 @@ struct AskResponse {
     record: Option<HistoryRecord>,
     failure_message: Option<String>,
     retry_available: bool,
+    tool_results: Vec<LocalToolResult>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct LocalToolResult {
+    tool: String,
+    ok: bool,
+    message: String,
+    query: Option<String>,
+    matches: Vec<NoteSearchMatch>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct NoteSearchMatch {
+    id: String,
+    content: String,
+    created_at: i64,
+    source_question: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -299,6 +320,10 @@ struct ConversationMapDraftEdge {
 struct ChatCompletionRequest<'a> {
     model: &'a str,
     messages: Vec<ChatMessage<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<ChatToolDefinition>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<&'a str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -326,6 +351,32 @@ struct ChatChoice {
 #[derive(Debug, Deserialize)]
 struct ChatChoiceMessage {
     content: serde_json::Value,
+    tool_calls: Option<Vec<ChatCompletionToolCall>>,
+}
+
+#[derive(Debug, Serialize)]
+struct ChatToolDefinition {
+    r#type: String,
+    function: ChatToolFunctionDefinition,
+}
+
+#[derive(Debug, Serialize)]
+struct ChatToolFunctionDefinition {
+    name: String,
+    description: String,
+    parameters: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct ChatCompletionToolCall {
+    r#type: String,
+    function: ChatCompletionToolFunctionCall,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct ChatCompletionToolFunctionCall {
+    name: String,
+    arguments: String,
 }
 
 #[derive(Debug, Serialize)]

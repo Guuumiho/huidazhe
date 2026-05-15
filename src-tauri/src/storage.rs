@@ -178,6 +178,10 @@ pub(crate) fn model_call_log_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(data_dir(app)?.join(MODEL_CALL_LOG_FILE_NAME))
 }
 
+pub(crate) fn note_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(data_dir(app)?.join(NOTE_FILE_NAME))
+}
+
 pub(crate) fn append_model_call_log(app: &AppHandle, entry: &ModelCallLogEntry) -> Result<(), String> {
     let path = model_call_log_path(app)?;
     if let Some(parent) = path.parent() {
